@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -168,6 +169,51 @@ def add_cell_metadata_to_umap_sample(
     return enriched
 
 
+def _add_umap_group_labels(
+    plot_df: pd.DataFrame,
+    label_col: str,
+    *,
+    skip_labels: set[str] | None = None,
+    max_labels: int | None = None,
+    min_cells: int = 500,
+    fontsize: int = 7,
+) -> None:
+    skip_labels = skip_labels or set()
+    counts = plot_df[label_col].value_counts()
+    labels = [
+        label
+        for label, n_cells in counts.items()
+        if label not in skip_labels and n_cells >= min_cells
+    ]
+    if max_labels is not None:
+        labels = labels[:max_labels]
+
+    for label in labels:
+        group = plot_df.loc[plot_df[label_col] == label, ["UMAP1", "UMAP2"]]
+        if group.empty:
+            continue
+        x = float(group["UMAP1"].median())
+        y = float(group["UMAP2"].median())
+        text = plt.text(
+            x,
+            y,
+            str(label).replace("_", " "),
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            weight="bold",
+            color="black",
+            clip_on=False,
+            bbox={
+                "boxstyle": "round,pad=0.18",
+                "facecolor": "white",
+                "edgecolor": "none",
+                "alpha": 0.72,
+            },
+        )
+        text.set_path_effects([pe.withStroke(linewidth=2.0, foreground="white")])
+
+
 def plot_umap_by_cell_type(
     umap_df: pd.DataFrame,
     *,
@@ -194,6 +240,12 @@ def plot_umap_by_cell_type(
             linewidth=0,
             alpha=0.35,
         )
+        _add_umap_group_labels(
+            umap_df,
+            "major_trajectory",
+            min_cells=1_000,
+            fontsize=7,
+        )
         plt.legend(markerscale=6, bbox_to_anchor=(1.02, 1), loc="upper left")
         plt.title("Full-data streaming UMAP sample by major trajectory")
         savefig("full_umap_by_major_trajectory.png")
@@ -215,6 +267,14 @@ def plot_umap_by_cell_type(
             s=1,
             linewidth=0,
             alpha=0.35,
+        )
+        _add_umap_group_labels(
+            plot_df,
+            "celltype_update_top",
+            skip_labels={"Other"},
+            max_labels=top_n_celltypes,
+            min_cells=500,
+            fontsize=6,
         )
         plt.legend(markerscale=6, bbox_to_anchor=(1.02, 1), loc="upper left")
         plt.title(f"Full-data streaming UMAP sample by top {top_n_celltypes} cell types")
