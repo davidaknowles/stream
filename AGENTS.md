@@ -11,6 +11,7 @@ This repository contains workflow code for downloading and exploring the JAX Ann
 ## Analysis Workflow
 
 - Main notebook: `notebooks/jax_adata_eda.ipynb`
+- Streaming/metadata helper module: `src/jax_adata_streaming.py`
 - Slurm runner: `slurm/run_jax_adata_eda.sbatch`
 - Python environment requirements: `requirements-jax-adata-eda.txt`
 

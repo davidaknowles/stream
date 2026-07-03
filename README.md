@@ -6,6 +6,7 @@ Workflow code for basic EDA of the JAX AnnData files from the Shendure lab publi
 
 - `notebooks/jax_adata_eda.ipynb` - source notebook for dataset inventory, metadata exploration, embryonic staging summaries, and full-data UMAP.
 - `notebooks/jax_adata_eda_executed.ipynb` - executed notebook from the completed Slurm run.
+- `src/jax_adata_streaming.py` - reusable streaming helpers for metadata summaries and memory-bounded full-data UMAP.
 - `slurm/run_jax_adata_eda.sbatch` - Slurm batch script for running the notebook on a compute node.
 - `requirements-jax-adata-eda.txt` - Python dependencies for the analysis environment.
 - `AGENTS.md` - notes for future coding agents working in this repo.
@@ -70,3 +71,14 @@ The full dataset has 11,441,407 cells. Exact in-memory UMAP over the concatenate
 5. Project all cells into the learned UMAP space.
 
 Key generated outputs include full UMAP coordinates, density plots, UMAP colored by `day`, and UMAP colored by `embryo_id`.
+
+## Metadata Notes
+
+The AnnData `.obs` tables contain `cell_id`, `keep`, `day`, `embryo_id`, and `experimental_batch`.
+
+The companion `df_cell.csv` additionally contains cell labels:
+
+- `major_trajectory`
+- `celltype_update`
+
+It also contains per-cell `day` and `embryo_id`, which can be summarized into per-embryo staging counts.
