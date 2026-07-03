@@ -119,6 +119,108 @@ def _make_logger(out_dir: Path) -> Callable[[str], None]:
     return log_progress
 
 
+def _sample_plot_indices(total_cells: int, config: StreamingUmapConfig) -> np.ndarray:
+    rng = np.random.default_rng(config.random_seed)
+    pca_train_n = min(config.pca_train_cells, total_cells)
+    umap_train_n = min(config.umap_train_cells, total_cells)
+    plot_n = min(config.umap_plot_cells, total_cells)
+    rng.choice(total_cells, size=pca_train_n, replace=False)
+    rng.choice(total_cells, size=umap_train_n, replace=False)
+    return np.sort(rng.choice(total_cells, size=plot_n, replace=False))
+
+
+def _load_selected_cell_metadata(
+    df_cell_path: Path,
+    selected_indices: np.ndarray,
+    columns: tuple[str, ...] = ("major_trajectory", "celltype_update"),
+) -> pd.DataFrame:
+    selected = set(int(i) for i in selected_indices)
+    rows = []
+    with df_cell_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row_idx, row in enumerate(reader):
+            if row_idx in selected:
+                rows.append({column: row.get(column, "NA") or "NA" for column in columns})
+                if len(rows) == len(selected_indices):
+                    break
+    return pd.DataFrame(rows, columns=columns)
+
+
+def add_cell_metadata_to_umap_sample(
+    umap_df: pd.DataFrame,
+    *,
+    df_cell_path: Path,
+    total_cells: int,
+    config: StreamingUmapConfig | None = None,
+) -> pd.DataFrame:
+    """Add df_cell.csv label columns to a UMAP plotting sample."""
+
+    config = config or StreamingUmapConfig.from_env()
+    plot_idx = _sample_plot_indices(total_cells, config)
+    labels = _load_selected_cell_metadata(df_cell_path, plot_idx)
+    if len(labels) != len(umap_df):
+        raise ValueError(
+            f"Loaded {len(labels):,} labels for {len(umap_df):,} UMAP sample rows"
+        )
+    enriched = umap_df.reset_index(drop=True).copy()
+    for column in labels.columns:
+        enriched[column] = labels[column].to_numpy()
+    return enriched
+
+
+def plot_umap_by_cell_type(
+    umap_df: pd.DataFrame,
+    *,
+    out_dir: Path,
+    savefig: Callable[[str], None] | None = None,
+    top_n_celltypes: int = 30,
+) -> None:
+    """Write UMAP plots colored by broad and fine cell-type labels."""
+
+    if savefig is None:
+        def savefig(name: str) -> None:
+            plt.tight_layout()
+            plt.savefig(out_dir / name, bbox_inches="tight")
+            plt.close()
+
+    if "major_trajectory" in umap_df.columns:
+        plt.figure(figsize=(8, 6))
+        sns.scatterplot(
+            data=umap_df,
+            x="UMAP1",
+            y="UMAP2",
+            hue="major_trajectory",
+            s=1,
+            linewidth=0,
+            alpha=0.35,
+        )
+        plt.legend(markerscale=6, bbox_to_anchor=(1.02, 1), loc="upper left")
+        plt.title("Full-data streaming UMAP sample by major trajectory")
+        savefig("full_umap_by_major_trajectory.png")
+
+    if "celltype_update" in umap_df.columns:
+        top = umap_df["celltype_update"].value_counts().head(top_n_celltypes).index
+        plot_df = umap_df.copy()
+        plot_df["celltype_update_top"] = np.where(
+            plot_df["celltype_update"].isin(top),
+            plot_df["celltype_update"],
+            "Other",
+        )
+        plt.figure(figsize=(8, 6))
+        sns.scatterplot(
+            data=plot_df,
+            x="UMAP1",
+            y="UMAP2",
+            hue="celltype_update_top",
+            s=1,
+            linewidth=0,
+            alpha=0.35,
+        )
+        plt.legend(markerscale=6, bbox_to_anchor=(1.02, 1), loc="upper left")
+        plt.title(f"Full-data streaming UMAP sample by top {top_n_celltypes} cell types")
+        savefig("full_umap_by_celltype_update_top30.png")
+
+
 def run_streaming_umap(
     *,
     h5ad_files: list[Path],
@@ -128,6 +230,7 @@ def run_streaming_umap(
     obs_all: pd.DataFrame,
     stage_cols: list[str],
     savefig: Callable[[str], None],
+    cell_metadata_path: Path | None = None,
     config: StreamingUmapConfig | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Compute a memory-bounded full-data UMAP and return the plotting sample."""
@@ -300,6 +403,10 @@ def run_streaming_umap(
     umap_df["source_file"] = obs_reset["source_file"].iloc[plot_idx].to_numpy()
     for col in stage_cols[:4]:
         umap_df[col] = obs_reset[col].iloc[plot_idx].astype(str).to_numpy()
+    if cell_metadata_path is not None and cell_metadata_path.exists():
+        labels = _load_selected_cell_metadata(cell_metadata_path, plot_idx)
+        for column in labels.columns:
+            umap_df[column] = labels[column].to_numpy()
     umap_df.to_csv(out_dir / "full_umap_streaming_plot_sample.csv.gz", index=False)
 
     plt.figure(figsize=(7, 6))
@@ -315,6 +422,7 @@ def run_streaming_umap(
     plt.legend(markerscale=6, bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.title("Full-data streaming UMAP sample by source file")
     savefig("full_umap_streaming_sample_by_file.png")
+    plot_umap_by_cell_type(umap_df, out_dir=out_dir, savefig=savefig)
 
     summary = {
         "total_cells": total_cells,

@@ -72,6 +72,11 @@ The full dataset has 11,441,407 cells. Exact in-memory UMAP over the concatenate
 
 Key generated outputs include full UMAP coordinates, density plots, UMAP colored by `day`, and UMAP colored by `embryo_id`.
 
+Tracked example figures:
+
+- `figures/full_umap_by_major_trajectory.png`
+- `figures/full_umap_by_celltype_update_top30.png`
+
 ## Metadata Notes
 
 The AnnData `.obs` tables contain `cell_id`, `keep`, `day`, `embryo_id`, and `experimental_batch`.
