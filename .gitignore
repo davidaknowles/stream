@@ -1,0 +1,32 @@
+# Local Python environments
+.venv/
+.venv-*/
+venv/
+env/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/*_executed.ipynb
+
+# Downloaded datasets and generated analysis outputs
+/downloads/
+/outputs/
+/logs/
+
+# Large single-cell data artifacts
+*.h5ad
+*.loom
+*.zarr/
+
+# Local scratch files
+*.tmp
+*.tmp.*
+*.swp
+.DS_Store
