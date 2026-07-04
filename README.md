@@ -1,14 +1,18 @@
 # stream
 
-Workflow code for basic EDA of the JAX AnnData files from the Shendure lab public backup.
+Workflow code for EDA and STREAM modeling of the JAX AnnData files from the Shendure lab public backup.
 
 ## Contents
 
 - `notebooks/jax_adata_eda.ipynb` - source notebook for dataset inventory, metadata exploration, embryonic staging summaries, and full-data UMAP.
 - `notebooks/jax_adata_eda_executed.ipynb` - executed notebook from the completed Slurm run.
 - `src/jax_adata_streaming.py` - reusable streaming helpers for metadata summaries and memory-bounded full-data UMAP.
+- `src/stream_model/` - PyTorch STREAM model, standard CFM baseline, CRE/TSS preprocessing, AlphaGenome embedding helpers, and minibatch OT utilities.
 - `slurm/run_jax_adata_eda.sbatch` - Slurm batch script for running the notebook on a compute node.
+- `slurm/run_stream_*.sbatch` - Slurm batch scripts for STREAM preprocessing, CRE embedding, training, and evaluation.
 - `requirements-jax-adata-eda.txt` - Python dependencies for the analysis environment.
+- `requirements-stream.txt` - Python dependencies for the STREAM workflow.
+- `docs/main.tex` - model notes for STREAM.
 - `AGENTS.md` - notes for future coding agents working in this repo.
 
 Downloaded data, generated outputs, Slurm logs, and local virtual environments are intentionally not tracked by Git.
@@ -58,6 +62,46 @@ The script writes logs to `logs/` and outputs to:
 
 ```text
 outputs/jax_adata_eda/
+```
+
+## STREAM Model
+
+STREAM learns a sequence-conditioned CFM vector field for mouse development. cCREs are linked to genes within 100 kb of each TSS, every gene receives a promoter token, and AlphaGenome embeddings are cached before training. The model compares:
+
+- standard expression-only CFM;
+- STREAM with FiLM conditioning on cell state;
+- STREAM with cross-attention conditioning on cell state.
+
+Prepare gene/TSS/CRE links:
+
+```bash
+sbatch slurm/run_stream_prepare.sbatch
+```
+
+Set `alphagenome_checkpoint` in `configs/stream_mouse_dev.yaml`, then embed CREs:
+
+```bash
+sbatch slurm/run_stream_embed_cre.sbatch
+```
+
+Train model variants:
+
+```bash
+VARIANT=standard_cfm sbatch slurm/run_stream_train.sbatch
+VARIANT=film sbatch slurm/run_stream_train.sbatch
+VARIANT=cross_attention sbatch slurm/run_stream_train.sbatch
+```
+
+Evaluate on held-out timepoint intervals:
+
+```bash
+VARIANT=film sbatch slurm/run_stream_evaluate.sbatch
+```
+
+STREAM outputs are written to:
+
+```text
+outputs/stream/
 ```
 
 ## UMAP Strategy

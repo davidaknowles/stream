@@ -12,10 +12,15 @@ This repository contains workflow code for downloading and exploring the JAX Ann
 
 - Main notebook: `notebooks/jax_adata_eda.ipynb`
 - Streaming/metadata helper module: `src/jax_adata_streaming.py`
+- STREAM model package: `src/stream_model/`
 - Slurm runner: `slurm/run_jax_adata_eda.sbatch`
+- STREAM Slurm runners: `slurm/run_stream_*.sbatch`
 - Python environment requirements: `requirements-jax-adata-eda.txt`
+- STREAM environment requirements: `requirements-stream.txt`
 
 The notebook is designed for the full 11.4M-cell dataset. Exact in-memory UMAP is not viable at this scale, so the workflow uses streaming HVG selection, sampled sparse SVD/PCA, UMAP fitting on a representative sample, and projection of all cells.
+
+STREAM uses a protein-coding HVG panel, cCREs within 100 kb of each gene TSS, an explicit promoter token for each gene, AlphaGenome CRE embeddings cached under `outputs/stream/`, minibatch OT between neighboring time points, and held-out-timepoint evaluation. The standard CFM baseline uses the same selected genes and minibatch OT setup.
 
 ## Cluster Notes
 

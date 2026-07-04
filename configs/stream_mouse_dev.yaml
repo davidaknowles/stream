@@ -1,0 +1,41 @@
+project_root: /gpfs/commons/home/daknowles/projects/stream
+adata_dir: downloads/adata
+cell_metadata_csv: downloads/adata/df_cell.csv
+gene_metadata_csv: downloads/adata/df_gene.csv
+hvg_csv: outputs/jax_adata_eda/streaming_hvg_genes.csv
+ccre_bed: downloads/screen_mouse_cre/mm10-cCREs.bed.gz
+gtf: ~/knowles_lab/index/nonhuman/mm10/Mus_musculus.GRCm38.95.gtf.gz
+fasta: ~/knowles_lab/index/nonhuman/mm10/GRCm38.primary_assembly.genome.fa.gz
+out_dir: outputs/stream
+
+gene_set: protein_coding_hvg
+n_hvg: 2000
+cre_window_bp: 100000
+promoter_window_bp: 1000
+synthetic_promoter_bp: 512
+max_cres_per_gene: 32
+
+alphagenome_repo: /gpfs/commons/home/daknowles/projects/alphagenome-pytorch
+alphagenome_checkpoint:
+alphagenome_sequence_bp: 131072
+alphagenome_batch_size: 2
+alphagenome_organism_index: 1
+
+batch_size: 64
+ot_epsilon: 0.05
+ot_iterations: 80
+learning_rate: 0.0001
+epochs: 10
+heldout_days:
+  - E9.5
+  - E10.5
+
+model_variant: film
+d_model: 256
+n_heads: 8
+n_layers: 4
+n_context_tokens: 8
+dropout: 0.1
+positional_encoding: rope
+seed: 1337
+device: cuda
