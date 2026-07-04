@@ -143,6 +143,7 @@ def predict_variant_velocity(adata, config: StreamConfig, variant: str, device: 
 
 def add_velocity_layer(adata, velocity: np.ndarray, vkey: str = "velocity"):
     out = adata.copy()
+    out.layers["spliced"] = np.asarray(out.X, dtype=np.float32)
     out.layers[vkey] = velocity.astype(np.float32)
     return out
 
