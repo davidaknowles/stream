@@ -49,12 +49,37 @@ def main() -> None:
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
-    metrics = train_steps(cfg, sampler, model, optimizer, cre_inputs=cre_inputs, steps_per_epoch=args.steps_per_epoch)
+    wandb_run = None
+    if cfg.use_wandb:
+        import wandb
+
+        run_name = cfg.wandb_run_name or f"{cfg.model_variant}_heldout_timepoints"
+        wandb_run = wandb.init(
+            project=cfg.wandb_project,
+            entity=cfg.wandb_entity,
+            mode=cfg.wandb_mode,
+            name=run_name,
+            config=cfg.to_dict(),
+            tags=["stream", cfg.model_variant, "mouse_dev"],
+        )
+    metrics = train_steps(
+        cfg,
+        sampler,
+        model,
+        optimizer,
+        cre_inputs=cre_inputs,
+        steps_per_epoch=args.steps_per_epoch,
+        wandb_run=wandb_run,
+    )
 
     metrics_path = cfg.out_dir / f"train_metrics_{cfg.model_variant}.csv"
     ckpt_path = cfg.out_dir / f"model_{cfg.model_variant}.pt"
     pd.DataFrame(metrics).to_csv(metrics_path, index=False)
     torch.save({"model": model.state_dict(), "config": cfg.to_dict()}, ckpt_path)
+    if wandb_run is not None:
+        wandb_run.summary["final_train_loss"] = float(metrics[-1]["loss"]) if metrics else None
+        wandb_run.summary["checkpoint_path"] = str(ckpt_path)
+        wandb_run.finish()
     print(f"Wrote {metrics_path}")
     print(f"Wrote {ckpt_path}")
 

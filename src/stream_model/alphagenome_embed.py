@@ -29,10 +29,10 @@ class FastaExtractor:
         self.backend = None
         self.kind = ""
         try:
-            import pyfastx
+            import pysam
 
-            self.backend = pyfastx.Fasta(self.fasta_path)
-            self.kind = "pyfastx"
+            self.backend = pysam.FastaFile(self.fasta_path)
+            self.kind = "pysam"
             return
         except Exception:
             pass
@@ -45,10 +45,10 @@ class FastaExtractor:
         except Exception:
             pass
         try:
-            import pysam
+            import pyfastx
 
-            self.backend = pysam.FastaFile(self.fasta_path)
-            self.kind = "pysam"
+            self.backend = pyfastx.Fasta(self.fasta_path)
+            self.kind = "pyfastx"
             return
         except Exception as exc:
             raise RuntimeError(
@@ -59,12 +59,47 @@ class FastaExtractor:
     def fetch(self, chrom: str, start: int, end: int) -> str:
         start = max(0, int(start))
         end = max(start, int(end))
+        chroms = _chrom_candidates(chrom)
         if self.kind == "pyfastx":
             # pyfastx uses 1-based inclusive coordinates.
-            return self.backend.fetch(chrom, (start + 1, end)).upper()
+            last_error = None
+            for candidate in chroms:
+                try:
+                    return self.backend.fetch(candidate, (start + 1, end)).upper()
+                except Exception as exc:
+                    last_error = exc
+            raise KeyError(f"None of {chroms} found in {self.fasta_path}") from last_error
         if self.kind == "pyfaidx":
-            return str(self.backend[chrom][start:end]).upper()
-        return self.backend.fetch(chrom, start, end).upper()
+            last_error = None
+            for candidate in chroms:
+                try:
+                    return str(self.backend[candidate][start:end]).upper()
+                except Exception as exc:
+                    last_error = exc
+            raise KeyError(f"None of {chroms} found in {self.fasta_path}") from last_error
+        last_error = None
+        for candidate in chroms:
+            try:
+                return self.backend.fetch(candidate, start, end).upper()
+            except Exception as exc:
+                last_error = exc
+        raise KeyError(f"None of {chroms} found in {self.fasta_path}") from last_error
+
+
+def _chrom_candidates(chrom: str) -> list[str]:
+    chrom = str(chrom)
+    candidates = [chrom]
+    if chrom.startswith("chr"):
+        candidates.append(chrom[3:])
+    else:
+        candidates.append(f"chr{chrom}")
+    if chrom in {"chrM", "chrMT", "M", "MT"}:
+        candidates.extend(["chrM", "chrMT", "M", "MT"])
+    out = []
+    for candidate in candidates:
+        if candidate not in out:
+            out.append(candidate)
+    return out
 
 
 class AlphaGenomeCREEmbedder:
@@ -142,14 +177,22 @@ def embed_cre_table(
     ids: list[str] = []
     half = sequence_bp // 2
     unique = cre_table.drop_duplicates("ccre_id")
+    total = len(unique)
+    done = 0
     for cre in unique.itertuples(index=False):
         center = int(cre.midpoint)
         seqs.append(fasta.fetch(cre.chrom, center - half, center + half))
         ids.append(cre.ccre_id)
         if len(seqs) == batch_size:
             rows.extend(_embed_batch(embedder, ids, seqs))
+            done += len(ids)
+            if done % max(batch_size * 25, 1) == 0 or done == total:
+                print(f"AlphaGenome CRE embeddings: {done:,}/{total:,}", flush=True)
             ids, seqs = [], []
     rows.extend(_embed_batch(embedder, ids, seqs))
+    done += len(ids)
+    if ids:
+        print(f"AlphaGenome CRE embeddings: {done:,}/{total:,}", flush=True)
     return pd.DataFrame(rows)
 
 

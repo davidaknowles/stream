@@ -16,5 +16,5 @@ cd "$PROJECT_ROOT"
 mkdir -p logs
 module purge
 module load PyTorch/2.1.2-foss-2023b
-export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
+export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
 python scripts/evaluate_stream.py --config configs/stream_mouse_dev.yaml --variant "$VARIANT" --batches "$BATCHES" --device cuda

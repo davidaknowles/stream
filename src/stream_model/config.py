@@ -51,6 +51,12 @@ class StreamConfig:
     seed: int = 1337
     device: str = "cuda"
 
+    use_wandb: bool = True
+    wandb_project: str = "stream"
+    wandb_entity: str | None = None
+    wandb_mode: str = "online"
+    wandb_run_name: str | None = None
+
     @classmethod
     def from_yaml(cls, path: str | Path) -> "StreamConfig":
         import yaml

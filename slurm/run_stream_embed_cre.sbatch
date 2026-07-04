@@ -14,5 +14,6 @@ cd "$PROJECT_ROOT"
 mkdir -p logs
 module purge
 module load PyTorch/2.1.2-foss-2023b
-export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:/gpfs/commons/home/daknowles/projects/alphagenome-pytorch/src:${PYTHONPATH:-}"
+export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:/gpfs/commons/home/daknowles/projects/alphagenome-pytorch/src:${PYTHONPATH:-}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 python scripts/embed_cre_alphagenome.py --config configs/stream_mouse_dev.yaml --device cuda

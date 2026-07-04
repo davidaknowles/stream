@@ -40,7 +40,15 @@ def build_model(config, n_genes: int, cre_dim: int | None = None) -> torch.nn.Mo
     )
 
 
-def train_steps(config, sampler, model, optimizer, cre_inputs=None, steps_per_epoch: int = 100) -> list[dict[str, float]]:
+def train_steps(
+    config,
+    sampler,
+    model,
+    optimizer,
+    cre_inputs=None,
+    steps_per_epoch: int = 100,
+    wandb_run=None,
+) -> list[dict[str, float]]:
     device = next(model.parameters()).device
     metrics: list[dict[str, float]] = []
     for epoch in range(config.epochs):
@@ -65,5 +73,18 @@ def train_steps(config, sampler, model, optimizer, cre_inputs=None, steps_per_ep
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-            metrics.append({"epoch": epoch, "step": step, "loss": float(loss.detach().cpu())})
+            value = float(loss.detach().cpu())
+            row = {"epoch": epoch, "step": step, "loss": value}
+            metrics.append(row)
+            if wandb_run is not None:
+                global_step = epoch * steps_per_epoch + step
+                wandb_run.log(
+                    {
+                        "train/loss": value,
+                        "train/epoch": epoch,
+                        "train/step": step,
+                        "model_variant": config.model_variant,
+                    },
+                    step=global_step,
+                )
     return metrics

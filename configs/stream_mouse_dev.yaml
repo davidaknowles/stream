@@ -5,7 +5,7 @@ gene_metadata_csv: downloads/adata/df_gene.csv
 hvg_csv: outputs/jax_adata_eda/streaming_hvg_genes.csv
 ccre_bed: downloads/screen_mouse_cre/mm10-cCREs.bed.gz
 gtf: ~/knowles_lab/index/nonhuman/mm10/Mus_musculus.GRCm38.95.gtf.gz
-fasta: ~/knowles_lab/index/nonhuman/mm10/GRCm38.primary_assembly.genome.fa.gz
+fasta: outputs/stream/GRCm38.primary_assembly.genome.fa
 out_dir: outputs/stream
 
 gene_set: protein_coding_hvg
@@ -16,9 +16,9 @@ synthetic_promoter_bp: 512
 max_cres_per_gene: 32
 
 alphagenome_repo: /gpfs/commons/home/daknowles/projects/alphagenome-pytorch
-alphagenome_checkpoint:
+alphagenome_checkpoint: /gpfs/commons/home/daknowles/projects/mpragent/outputs/models/alphagenome/model_all_folds.safetensors
 alphagenome_sequence_bp: 131072
-alphagenome_batch_size: 2
+alphagenome_batch_size: 16
 alphagenome_organism_index: 1
 
 batch_size: 64
@@ -39,3 +39,9 @@ dropout: 0.1
 positional_encoding: rope
 seed: 1337
 device: cuda
+
+use_wandb: true
+wandb_project: stream
+wandb_entity:
+wandb_mode: offline
+wandb_run_name:

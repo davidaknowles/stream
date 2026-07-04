@@ -3,7 +3,10 @@ h5py
 numpy
 pandas
 plotnine
-pyfastx
+pysam
 pyyaml
+safetensors
 scipy
+scvelo
 torch
+wandb

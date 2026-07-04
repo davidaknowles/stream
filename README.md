@@ -10,6 +10,7 @@ Workflow code for EDA and STREAM modeling of the JAX AnnData files from the Shen
 - `src/stream_model/` - PyTorch STREAM model, standard CFM baseline, CRE/TSS preprocessing, AlphaGenome embedding helpers, and minibatch OT utilities.
 - `slurm/run_jax_adata_eda.sbatch` - Slurm batch script for running the notebook on a compute node.
 - `slurm/run_stream_*.sbatch` - Slurm batch scripts for STREAM preprocessing, CRE embedding, training, and evaluation.
+- `notebooks/stream_scvelo_velocity_stream.ipynb` - scVelo velocity stream plots for standard CFM, FiLM STREAM, and cross-attention STREAM checkpoints.
 - `requirements-jax-adata-eda.txt` - Python dependencies for the analysis environment.
 - `requirements-stream.txt` - Python dependencies for the STREAM workflow.
 - `docs/main.tex` - model notes for STREAM.
@@ -96,6 +97,12 @@ Evaluate on held-out timepoint intervals:
 
 ```bash
 VARIANT=film sbatch slurm/run_stream_evaluate.sbatch
+```
+
+Generate scVelo velocity stream plots from the trained checkpoints:
+
+```bash
+sbatch slurm/run_stream_scvelo_notebook.sbatch
 ```
 
 STREAM outputs are written to:

@@ -14,7 +14,12 @@ VARIANT="${VARIANT:-film}"
 STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-100}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
+mkdir -p outputs/stream/wandb
 module purge
 module load PyTorch/2.1.2-foss-2023b
-export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
+export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
+export WANDB_DIR="$PROJECT_ROOT/outputs/stream/wandb"
+export WANDB_PROJECT="${WANDB_PROJECT:-stream}"
+export WANDB_MODE="${WANDB_MODE:-offline}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 python scripts/train_stream.py --config configs/stream_mouse_dev.yaml --variant "$VARIANT" --steps-per-epoch "$STEPS_PER_EPOCH" --device cuda

@@ -13,5 +13,5 @@ cd "$PROJECT_ROOT"
 mkdir -p logs
 module purge
 module load Python/3.11.5-GCCcore-13.2.0
-export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
 python scripts/prepare_stream_data.py --config configs/stream_mouse_dev.yaml
