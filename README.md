@@ -67,11 +67,26 @@ outputs/jax_adata_eda/
 
 ## STREAM Model
 
-STREAM learns a sequence-conditioned CFM vector field for mouse development. cCREs are linked to genes within 100 kb of each TSS, every gene receives a promoter token, and AlphaGenome embeddings are cached before training. The model compares:
+STREAM learns a continuous vector field for mouse development, but unlike a standard expression-only CFM model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
+
+1. Represent each cell as expression over a selected protein-coding HVG panel.
+2. Link cCREs to each gene if they fall within 100 kb of the gene TSS.
+3. Embed each linked CRE/promoter sequence with AlphaGenome.
+4. Treat the CREs for a gene as regulatory tokens processed by a shared transformer.
+5. Condition those regulatory tokens on the current global cell state.
+6. Read each gene's velocity from the final promoter-token representation.
+
+Every gene receives an explicit promoter token. If no linked cCRE is within 1 kb of the TSS, a synthetic promoter CRE centered on the TSS is inserted. This gives the model a consistent promoter readout location while still allowing distal CRE tokens to influence the promoter representation through self-attention.
+
+The model learns by conditional flow matching between neighboring developmental time points. Each minibatch contains cells from one adjacent interval, minibatch optimal transport couples cells across that interval, and the model regresses the velocity required to move from the earlier cell state to the later cell state.
+
+The implemented comparison includes:
 
 - standard expression-only CFM;
 - STREAM with FiLM conditioning on cell state;
 - STREAM with cross-attention conditioning on cell state.
+
+The FiLM variant maps cell state to feature-wise scale/shift parameters applied to regulatory token states. The cross-attention variant maps cell state to context tokens that regulatory tokens attend to. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
 
 Prepare gene/TSS/CRE links:
 

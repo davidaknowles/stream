@@ -40,6 +40,54 @@ Note that we do not condition on time $t$ to allow generalization across differe
 
 \paragraph{Conditioning variants.} The FiLM STREAM variant maps $x_t$ to feature-wise scale and shift parameters that modulate regulatory token states before promoter readout. The cross-attention STREAM variant maps $x_t$ to a small set of context tokens; regulatory tokens attend to these context tokens before promoter readout. Both variants share the same cCRE-gene links, AlphaGenome embeddings, promoter-token convention, minibatch OT coupling, and selected gene panel.
 
+\subsection{Architecture of the gene velocity model}
+
+For each selected gene $g$, the implementation packs up to $M$ regulatory tokens into a fixed tensor. Token $m$ for gene $g$ has an AlphaGenome embedding $z_{gm} \in \mathbb{R}^{3072}$, signed TSS-relative distance $d_{gm}$, a promoter indicator $p_{gm}$, and a mask $a_{gm}$ indicating whether the token is real rather than padding. The promoter token is always placed at index $m=0$. Let
+$$
+e_{gm}^{(0)} =
+W_z z_{gm} +
+\phi_d(d_{gm}/100{,}000) +
+E_p[p_{gm}] +
+\phi_{\mathrm{pos}}(d_{gm}),
+$$
+where $W_z$ projects AlphaGenome embeddings to the model width, $\phi_d$ is a small MLP for signed distance, $E_p$ is a learned promoter/non-promoter embedding, and $\phi_{\mathrm{pos}}$ is optional positional information. In the current code, $\phi_{\mathrm{pos}}$ can be absent, a learned binned-distance embedding, or RoPE applied to token features using signed distance. Padding tokens are masked in all self-attention layers.
+
+The gene regulatory sequence is encoded by a shared transformer,
+$$
+H_g = \mathrm{TransformerEnc}(e_{g1}^{(0)}, \ldots, e_{gM}^{(0)}),
+$$
+with the same parameters used for every gene. This weight sharing is important: the model must learn regulatory grammar that transfers across genes rather than assigning each gene a free velocity parameter. The default mouse development configuration uses model width 256, 8 attention heads, 4 transformer layers, dropout 0.1, and at most 32 CRE/promoter tokens per gene.
+
+The cell state $x_t$ is incorporated after CRE self-attention. This makes $f$ both sequence dependent and state dependent. Two conditioning mechanisms are implemented:
+
+\paragraph{FiLM conditioning.} A cell-state MLP maps $x_t$ to feature-wise scale and shift vectors,
+$$
+(\gamma(x_t), \beta(x_t)) = h_{\mathrm{FiLM}}(x_t), \qquad
+\tilde H_{bgm} = H_{gm} \odot (1 + \gamma_b) + \beta_b,
+$$
+for cell $b$, gene $g$, and token $m$. A layer normalization and scalar head are then applied only to the promoter token,
+$$
+f_g(x_t,\mathbf{Z}_g) = w^\top \mathrm{LN}(\tilde H_{bg0}) + b.
+$$
+
+\paragraph{Cross-attention conditioning.} A cell-state MLP maps $x_t$ to a small set of context tokens $C_b \in \mathbb{R}^{L \times D}$, with $L=8$ by default. Regulatory tokens query these context tokens,
+$$
+\tilde H_{bg:} =
+H_{g:} +
+\mathrm{MHA}(Q=H_{g:}, K=C_b, V=C_b),
+$$
+and the same promoter-token scalar head gives $f_g(x_t,\mathbf{Z}_g)$. This variant allows each gene's regulatory tokens to extract different information from the global cell state.
+
+The resulting vector field is formed by evaluating the same gene-level module for all selected genes:
+$$
+f_\theta(x_t, \{\mathbf{Z}_g\}_{g=1}^G)
+=
+\left(f_1(x_t,\mathbf{Z}_1), \ldots, f_G(x_t,\mathbf{Z}_G)\right).
+$$
+The implementation does not use a learned gene identity embedding by default. Gene specificity enters through the set of linked CRE/promoter tokens and their sequence-derived embeddings.
+
+\paragraph{Expression-only baseline.} The standard CFM baseline uses the same selected genes, same minibatch OT coupling, same interpolation path, and same target velocity, but replaces the sequence-conditioned gene module with an MLP $f_{\mathrm{CFM}}(x_t): \mathbb{R}^G \rightarrow \mathbb{R}^G$. This isolates the contribution of CRE/AlphaGenome conditioning from the flow matching training setup.
+
 \paragraph{Sequential Flow Matching Objective.} To fit $f$ across multiple time points, we match it to a target marginal vector field $\hat{f}_t$. We define independent flow matching objectives between consecutive time points $[t_k, t_{k+1}]$. Let $x_k \sim p_k(x)$ and $x_{k+1} \sim p_{k+1}(x)$ be sampled from the empirical distributions. We construct a linear path mapping $x_k$ to $x_{k+1}$. For $t \in [t_k, t_{k+1}]$, define the normalized time step $\tau = \frac{t - t_k}{t_{k+1} - t_k}$.
 
 The interpolated state $x_t$ is:
