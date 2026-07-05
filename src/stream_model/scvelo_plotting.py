@@ -12,6 +12,32 @@ from .config import StreamConfig
 from .data import parse_day_value
 
 
+def scvelo_cache_dir(config: StreamConfig, n_cells: int, seed: int) -> Path:
+    return config.out_dir / "scvelo_stream" / f"cache_n{n_cells}_seed{seed}"
+
+
+def load_or_sample_model_adata(
+    config: StreamConfig,
+    n_cells: int = 5000,
+    seed: int = 1337,
+    cache_dir: str | Path | None = None,
+    force: bool = False,
+):
+    """Load cached sampled AnnData, or sample and cache it."""
+
+    import anndata as ad
+
+    cache_dir = Path(cache_dir) if cache_dir is not None else scvelo_cache_dir(config, n_cells, seed)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "base_sample.h5ad"
+    if path.exists() and not force:
+        return ad.read_h5ad(path)
+    adata = sample_model_adata(config, n_cells=n_cells, seed=seed)
+    adata = order_days_for_plot(adata)
+    adata.write_h5ad(path, compression="gzip")
+    return adata
+
+
 def sample_model_adata(
     config: StreamConfig,
     n_cells: int = 5000,
@@ -141,6 +167,27 @@ def predict_variant_velocity(adata, config: StreamConfig, variant: str, device: 
     return np.vstack(outputs)
 
 
+def load_or_predict_variant_velocity(
+    adata,
+    config: StreamConfig,
+    variant: str,
+    device: str = "cpu",
+    batch_size: int = 512,
+    cache_dir: str | Path | None = None,
+    force: bool = False,
+) -> np.ndarray:
+    """Load cached model velocities, or predict and cache them."""
+
+    cache_dir = Path(cache_dir) if cache_dir is not None else scvelo_cache_dir(config, adata.n_obs, int(config.seed))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"velocity_{variant}.npy"
+    if path.exists() and not force:
+        return np.load(path).astype(np.float32)
+    velocity = predict_variant_velocity(adata, config, variant=variant, device=device, batch_size=batch_size)
+    np.save(path, velocity.astype(np.float16))
+    return velocity
+
+
 def add_velocity_layer(adata, velocity: np.ndarray, vkey: str = "velocity"):
     out = adata.copy()
     out.layers["spliced"] = np.asarray(out.X, dtype=np.float32)
@@ -152,7 +199,8 @@ def plot_velocity_stream(
     adata,
     output_path: str | Path,
     vkey: str = "velocity",
-    color: str = "day",
+    color: str = "embryonic_day",
+    color_map: str = "viridis",
     n_neighbors: int = 30,
 ):
     """Compute scVelo graph/embedding and save a velocity_embedding_stream plot."""
@@ -164,7 +212,101 @@ def plot_velocity_stream(
     scv.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X")
     scv.tl.velocity_graph(adata, vkey=vkey, n_jobs=1)
     scv.tl.velocity_embedding(adata, basis="umap", vkey=vkey)
-    scv.pl.velocity_embedding_stream(adata, basis="umap", vkey=vkey, color=color, show=False, title=Path(output_path).stem)
+    scv.pl.velocity_embedding_stream(
+        adata,
+        basis="umap",
+        vkey=vkey,
+        color=color,
+        color_map=color_map,
+        colorbar=True,
+        legend_loc="right margin",
+        xlabel="",
+        ylabel="",
+        title="",
+        frameon=False,
+        show=False,
+    )
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close()
+
+
+def cache_velocity_stream_inputs(
+    adata,
+    output_path: str | Path,
+    vkey: str = "velocity",
+    n_neighbors: int = 30,
+    force: bool = False,
+) -> Path:
+    """Cache UMAP-space velocity and stream grid arrays for fast restyling."""
+
+    output_path = Path(output_path)
+    if output_path.exists() and not force:
+        return output_path
+
+    import scvelo as scv
+    from scvelo.plotting.velocity_embedding_stream import compute_velocity_on_grid
+
+    scv.settings.verbosity = 2
+    scv.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X")
+    scv.tl.velocity_graph(adata, vkey=vkey, n_jobs=1)
+    scv.tl.velocity_embedding(adata, basis="umap", vkey=vkey)
+    x = np.asarray(adata.obsm["X_umap"], dtype=np.float32)
+    v = np.asarray(adata.obsm[f"{vkey}_umap"], dtype=np.float32)
+    x_grid, v_grid = compute_velocity_on_grid(
+        X_emb=x,
+        V_emb=v,
+        density=1,
+        smooth=None,
+        min_mass=None,
+        n_neighbors=None,
+        autoscale=False,
+        adjust_for_stream=True,
+        cutoff_perc=None,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        X_umap=x.astype(np.float32),
+        V_umap=v.astype(np.float32),
+        X_grid=x_grid.astype(np.float32),
+        V_grid=v_grid.astype(np.float32),
+    )
+    return output_path
+
+
+def plot_cached_velocity_stream(
+    adata,
+    cache_path: str | Path,
+    output_path: str | Path,
+    color: str = "embryonic_day",
+    color_map: str = "viridis",
+):
+    """Render a velocity stream plot from cached embedding/grid arrays."""
+
+    import matplotlib.pyplot as plt
+    import scvelo as scv
+
+    cached = np.load(cache_path)
+    scv.pl.velocity_embedding_stream(
+        adata,
+        basis="umap",
+        vkey="velocity",
+        color=color,
+        color_map=color_map,
+        colorbar=True,
+        legend_loc="right margin",
+        xlabel="",
+        ylabel="",
+        title="",
+        frameon=False,
+        show=False,
+        X=cached["X_umap"],
+        V=cached["V_umap"],
+        X_grid=cached["X_grid"],
+        V_grid=cached["V_grid"],
+    )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=200, bbox_inches="tight")
@@ -175,4 +317,5 @@ def order_days_for_plot(adata):
     if "day" in adata.obs:
         categories = sorted(adata.obs["day"].astype(str).unique(), key=parse_day_value)
         adata.obs["day"] = pd.Categorical(adata.obs["day"].astype(str), categories=categories, ordered=True)
+        adata.obs["embryonic_day"] = adata.obs["day"].astype(str).map(parse_day_value).astype(float)
     return adata
