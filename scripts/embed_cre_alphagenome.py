@@ -9,16 +9,20 @@ import numpy as np
 import pandas as pd
 
 from stream_model.alphagenome_embed import embed_cre_table
-from stream_model.config import StreamConfig
+from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.genome import build_token_arrays
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
+    parser.add_argument("--hvg-csv", default=None)
+    parser.add_argument("--n-hvg", type=int, default=None)
+    parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
     cfg = StreamConfig.from_yaml(args.config)
+    apply_config_overrides(cfg, hvg_csv=args.hvg_csv, n_hvg=args.n_hvg, out_dir=args.out_dir)
     if cfg.alphagenome_checkpoint is None:
         raise SystemExit("Set alphagenome_checkpoint in the config before embedding CREs.")
     links_path = cfg.out_dir / "cre_gene_links.csv"

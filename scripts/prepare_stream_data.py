@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from stream_model.config import StreamConfig
+from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import adjacent_intervals, load_selected_genes, ordered_days
 from stream_model.genome import link_cres_to_genes, parse_gtf_tss, read_ccre_bed
 
@@ -18,16 +18,21 @@ from stream_model.genome import link_cres_to_genes, parse_gtf_tss, read_ccre_bed
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
+    parser.add_argument("--hvg-csv", default=None)
+    parser.add_argument("--n-hvg", type=int, default=None)
+    parser.add_argument("--out-dir", default=None)
     args = parser.parse_args()
     cfg = StreamConfig.from_yaml(args.config)
+    apply_config_overrides(cfg, hvg_csv=args.hvg_csv, n_hvg=args.n_hvg, out_dir=args.out_dir)
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
-    selected_raw = load_selected_genes(cfg.gene_metadata_csv, cfg.hvg_csv, cfg.n_hvg)
+    selected_raw = load_selected_genes(cfg.gene_metadata_csv, cfg.hvg_csv, cfg.n_hvg + 1000)
 
     tss = parse_gtf_tss(cfg.gtf, gene_ids=selected_raw["gene_id"], gene_type="protein_coding")
     tss = selected_raw[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].merge(
         tss, on="gene_id", how="inner", suffixes=("", "_gtf")
     )
+    tss = tss.sort_values("variance", ascending=False).head(cfg.n_hvg).copy()
     tss["gene_name"] = tss["gene_short_name"].fillna(tss["gene_name"])
     selected = tss[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].copy()
     selected.to_csv(cfg.out_dir / "selected_genes.csv", index=False)

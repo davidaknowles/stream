@@ -97,3 +97,24 @@ class StreamConfig:
             else:
                 out[key] = value
         return out
+
+
+def apply_config_overrides(
+    cfg: StreamConfig,
+    *,
+    hvg_csv: str | Path | None = None,
+    n_hvg: int | None = None,
+    out_dir: str | Path | None = None,
+    wandb_run_name: str | None = None,
+) -> StreamConfig:
+    """Apply common CLI overrides after loading a YAML config."""
+
+    if hvg_csv is not None:
+        cfg.hvg_csv = cfg.resolve_path(hvg_csv)
+    if n_hvg is not None:
+        cfg.n_hvg = int(n_hvg)
+    if out_dir is not None:
+        cfg.out_dir = cfg.resolve_path(out_dir)
+    if wandb_run_name is not None:
+        cfg.wandb_run_name = wandb_run_name
+    return cfg

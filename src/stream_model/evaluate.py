@@ -11,11 +11,23 @@ from .ot import ot_cfm_batch
 
 
 @torch.no_grad()
-def evaluate_intervals(config, sampler, model, cre_inputs=None, n_batches: int = 20) -> pd.DataFrame:
+def evaluate_intervals(
+    config,
+    sampler,
+    model,
+    cre_inputs=None,
+    n_batches: int = 20,
+    eval_gene_sets: dict[str, list[int] | np.ndarray | None] | None = None,
+) -> pd.DataFrame:
     device = next(model.parameters()).device
     rows = []
     model.eval()
-    for _ in range(n_batches):
+    eval_gene_sets = eval_gene_sets or {"full": None}
+    eval_indices = {
+        name: None if indices is None else torch.as_tensor(indices, device=device, dtype=torch.long)
+        for name, indices in eval_gene_sets.items()
+    }
+    for batch_index in range(n_batches):
         batch = sampler.sample()
         x0 = torch.as_tensor(batch.x0, device=device)
         x1 = torch.as_tensor(batch.x1, device=device)
@@ -28,13 +40,19 @@ def evaluate_intervals(config, sampler, model, cre_inputs=None, n_batches: int =
             iterations=config.ot_iterations,
         )
         pred = model(xt) if cre_inputs is None else model(xt, **cre_inputs)
-        err = (pred - target).detach().cpu().numpy()
-        rows.append(
-            {
-                "day0": batch.day0,
-                "day1": batch.day1,
-                "loss": float(mse_cfm_loss(pred, target).cpu()),
-                "velocity_mae": float(np.mean(np.abs(err))),
-            }
-        )
+        for name, indices in eval_indices.items():
+            pred_eval = pred if indices is None else pred.index_select(1, indices)
+            target_eval = target if indices is None else target.index_select(1, indices)
+            err = (pred_eval - target_eval).detach().cpu().numpy()
+            rows.append(
+                {
+                    "batch": batch_index,
+                    "day0": batch.day0,
+                    "day1": batch.day1,
+                    "eval_gene_set": name,
+                    "n_eval_genes": int(pred_eval.shape[1]),
+                    "loss": float(mse_cfm_loss(pred_eval, target_eval).cpu()),
+                    "velocity_mae": float(np.mean(np.abs(err))),
+                }
+            )
     return pd.DataFrame(rows)

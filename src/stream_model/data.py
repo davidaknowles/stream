@@ -127,6 +127,13 @@ class H5adIntervalSampler:
 def load_selected_genes(gene_metadata_csv: str | Path, hvg_csv: str | Path, n_hvg: int) -> pd.DataFrame:
     genes = pd.read_csv(gene_metadata_csv, index_col=0)
     hvgs = pd.read_csv(hvg_csv)
-    selected = hvgs.head(n_hvg).merge(genes, left_on="gene", right_on="gene_id", how="inner")
-    selected = selected[selected["gene_type"] == "protein_coding"].drop_duplicates("gene_id")
+    if "variance" in hvgs.columns:
+        hvgs = hvgs.sort_values("variance", ascending=False)
+    selected = hvgs.merge(genes, left_on="gene", right_on="gene_id", how="inner")
+    selected = selected[selected["gene_type"] == "protein_coding"].drop_duplicates("gene_id").head(n_hvg)
+    if len(selected) < n_hvg and len(hvgs) > n_hvg:
+        raise ValueError(
+            f"Only found {len(selected):,} protein-coding HVGs in {hvg_csv}; "
+            f"need {n_hvg:,}. Regenerate the HVG table with more genes."
+        )
     return selected[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].reset_index(drop=True)

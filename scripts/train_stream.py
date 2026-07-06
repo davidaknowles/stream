@@ -9,7 +9,7 @@ import json
 import pandas as pd
 import torch
 
-from stream_model.config import StreamConfig
+from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
 from stream_model.train import build_model, load_cre_npz, train_steps
 
@@ -18,11 +18,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
     parser.add_argument("--variant", choices=["standard_cfm", "film", "cross_attention"], default=None)
+    parser.add_argument("--hvg-csv", default=None)
+    parser.add_argument("--n-hvg", type=int, default=None)
+    parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--wandb-run-name", default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
     cfg = StreamConfig.from_yaml(args.config)
+    apply_config_overrides(
+        cfg,
+        hvg_csv=args.hvg_csv,
+        n_hvg=args.n_hvg,
+        out_dir=args.out_dir,
+        wandb_run_name=args.wandb_run_name,
+    )
     if args.variant is not None:
         cfg.model_variant = args.variant
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
@@ -53,7 +64,7 @@ def main() -> None:
     if cfg.use_wandb:
         import wandb
 
-        run_name = cfg.wandb_run_name or f"{cfg.model_variant}_heldout_timepoints"
+        run_name = cfg.wandb_run_name or f"{cfg.model_variant}_{len(gene_ids)}genes_heldout_timepoints"
         wandb_run = wandb.init(
             project=cfg.wandb_project,
             entity=cfg.wandb_entity,

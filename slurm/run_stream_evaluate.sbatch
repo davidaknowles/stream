@@ -10,11 +10,27 @@
 
 set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
+CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
 VARIANT="${VARIANT:-film}"
 BATCHES="${BATCHES:-20}"
+HVG_CSV="${HVG_CSV:-}"
+N_HVG="${N_HVG:-}"
+OUT_DIR="${OUT_DIR:-}"
+EVAL_GENE_SUBSET="${EVAL_GENE_SUBSET:-}"
+STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
 module purge
-module load PyTorch/2.1.2-foss-2023b
-export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
-python scripts/evaluate_stream.py --config configs/stream_mouse_dev.yaml --variant "$VARIANT" --batches "$BATCHES" --device cuda
+if [[ ! -x "$STREAM_PYTHON" ]]; then
+  module load PyTorch/2.1.2-foss-2023b
+  STREAM_PYTHON=python
+  export PYTHONPATH="$HOME/.local/lib/python3.11/site-packages:$PROJECT_ROOT/src:$PROJECT_ROOT/.venv-jax-adata-eda/lib/python3.11/site-packages:${PYTHONPATH:-}"
+else
+  export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+fi
+args=(--config "$CONFIG" --variant "$VARIANT" --batches "$BATCHES" --device cuda)
+if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
+if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
+if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
+if [[ -n "$EVAL_GENE_SUBSET" ]]; then args+=(--eval-gene-subset "$EVAL_GENE_SUBSET"); fi
+"$STREAM_PYTHON" scripts/evaluate_stream.py "${args[@]}"

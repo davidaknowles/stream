@@ -98,3 +98,46 @@ def test_model_forward_variants(variant):
         is_promoter[:, 0] = True
         out = model(x, cre_embeddings, mask, signed_distance, is_promoter)
     assert out.shape == (batch, genes)
+
+
+def test_evaluate_intervals_reports_full_and_subset_gene_sets():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.evaluate import evaluate_intervals
+
+    class Config:
+        ot_epsilon = 0.1
+        ot_iterations = 10
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((4, 3), dtype=np.float32),
+                x1=np.ones((4, 3), dtype=np.float32),
+                t0=8.5,
+                t1=9.0,
+                day0="E8.5",
+                day1="E9.0",
+            )
+
+    class ZeroModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, x):
+            return torch.zeros_like(x) + self.weight
+
+    metrics = evaluate_intervals(
+        Config(),
+        Sampler(),
+        ZeroModel(),
+        n_batches=2,
+        eval_gene_sets={"full": None, "legacy": [0, 2]},
+    )
+    assert set(metrics["eval_gene_set"]) == {"full", "legacy"}
+    assert set(metrics.groupby("eval_gene_set")["n_eval_genes"].first().to_dict().items()) == {
+        ("full", 3),
+        ("legacy", 2),
+    }
+    assert len(metrics) == 4

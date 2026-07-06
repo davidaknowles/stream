@@ -88,10 +88,34 @@ The implemented comparison includes:
 
 The FiLM variant maps cell state to feature-wise scale/shift parameters applied to regulatory token states. The cross-attention variant maps cell state to context tokens that regulatory tokens attend to. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
 
+The GPU Slurm scripts use `STREAM_PYTHON=$HOME/venv/torchfix/bin/python` by
+default when that venv exists, because the local `PyTorch/2.1.2-foss-2023b`
+module can fail to import torch on current nodes due to a missing
+`libibverbs.so.1` runtime. Override `STREAM_PYTHON` if a different working
+torch environment is desired.
+
 Prepare gene/TSS/CRE links:
 
 ```bash
 sbatch slurm/run_stream_prepare.sbatch
+```
+
+For larger gene-panel experiments, first export streaming gene variances across
+all genes rather than reusing the default 2,000-row HVG table:
+
+```bash
+HVG_OUTPUT=outputs/jax_adata_eda/streaming_gene_variances.csv \
+  sbatch slurm/run_stream_select_hvgs.sbatch
+```
+
+Then run each panel into its own output directory:
+
+```bash
+HVG_CSV=outputs/jax_adata_eda/streaming_gene_variances.csv N_HVG=5000 OUT_DIR=outputs/stream_hvg5000 \
+  sbatch slurm/run_stream_prepare.sbatch
+
+HVG_CSV=outputs/jax_adata_eda/streaming_gene_variances.csv N_HVG=10000 OUT_DIR=outputs/stream_hvg10000 \
+  sbatch slurm/run_stream_prepare.sbatch
 ```
 
 Set `alphagenome_checkpoint` in `configs/stream_mouse_dev.yaml`, then embed CREs:
@@ -113,6 +137,11 @@ Evaluate on held-out timepoint intervals:
 ```bash
 VARIANT=film sbatch slurm/run_stream_evaluate.sbatch
 ```
+
+Evaluation always writes metrics for the model's full selected gene panel. Add
+`EVAL_GENE_SUBSET=legacy_1984:outputs/stream/selected_genes.csv` to also score
+the same held-out timepoint batches on the legacy <2k gene panel for fair
+comparison against earlier runs.
 
 Generate scVelo velocity stream plots from the trained checkpoints:
 
