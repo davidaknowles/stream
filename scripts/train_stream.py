@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument("--n-hvg", type=int, default=None)
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--wandb-run-name", default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gene-chunk-size", type=int, default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -36,6 +38,10 @@ def main() -> None:
     )
     if args.variant is not None:
         cfg.model_variant = args.variant
+    if args.batch_size is not None:
+        cfg.batch_size = args.batch_size
+    if args.gene_chunk_size is not None:
+        cfg.gene_chunk_size = args.gene_chunk_size
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 

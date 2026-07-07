@@ -49,12 +49,18 @@ def main() -> None:
         help="Additional metric panel as NAME:CSV with a gene_id column.",
     )
     parser.add_argument("--batches", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--gene-chunk-size", type=int, default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
     cfg = StreamConfig.from_yaml(args.config)
     apply_config_overrides(cfg, hvg_csv=args.hvg_csv, n_hvg=args.n_hvg, out_dir=args.out_dir)
     cfg.model_variant = args.variant
+    if args.batch_size is not None:
+        cfg.batch_size = args.batch_size
+    if args.gene_chunk_size is not None:
+        cfg.gene_chunk_size = args.gene_chunk_size
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
     selected = pd.read_csv(cfg.out_dir / "selected_genes.csv")
     gene_ids = selected["gene_id"].tolist()

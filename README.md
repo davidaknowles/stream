@@ -132,6 +132,11 @@ VARIANT=film sbatch slurm/run_stream_train.sbatch
 VARIANT=cross_attention sbatch slurm/run_stream_train.sbatch
 ```
 
+For larger STREAM panels, training and evaluation predict genes in chunks to
+avoid materializing the full `[batch, genes, CRE tokens, hidden]` activation
+tensor. The default `gene_chunk_size` is 512 and can be overridden in Slurm with
+`GENE_CHUNK_SIZE`; `BATCH_SIZE` can also be set per job without editing the YAML.
+
 Evaluate on held-out timepoint intervals:
 
 ```bash

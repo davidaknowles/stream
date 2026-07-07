@@ -8,6 +8,7 @@ import torch
 
 from .models import mse_cfm_loss
 from .ot import ot_cfm_batch
+from .train import predict_stream_chunked
 
 
 @torch.no_grad()
@@ -39,7 +40,11 @@ def evaluate_intervals(
             epsilon=config.ot_epsilon,
             iterations=config.ot_iterations,
         )
-        pred = model(xt) if cre_inputs is None else model(xt, **cre_inputs)
+        pred = (
+            model(xt)
+            if cre_inputs is None
+            else predict_stream_chunked(model, xt, cre_inputs, config.gene_chunk_size)
+        )
         for name, indices in eval_indices.items():
             pred_eval = pred if indices is None else pred.index_select(1, indices)
             target_eval = target if indices is None else target.index_select(1, indices)

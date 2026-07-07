@@ -40,6 +40,46 @@ def build_model(config, n_genes: int, cre_dim: int | None = None) -> torch.nn.Mo
     )
 
 
+def predict_stream_chunked(
+    model,
+    x: torch.Tensor,
+    cre_inputs: dict[str, torch.Tensor],
+    gene_chunk_size: int,
+) -> torch.Tensor:
+    """Predict STREAM velocities in gene chunks to control GPU memory."""
+
+    n_genes = int(cre_inputs["cre_embeddings"].shape[0])
+    if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
+        return model(x, **cre_inputs)
+    chunks = []
+    for start in range(0, n_genes, gene_chunk_size):
+        end = min(start + gene_chunk_size, n_genes)
+        gene_indices = torch.arange(start, end, device=x.device, dtype=torch.long)
+        chunks.append(model(x, **cre_inputs, gene_indices=gene_indices))
+    return torch.cat(chunks, dim=1)
+
+
+def stream_chunked_loss(
+    model,
+    x: torch.Tensor,
+    target: torch.Tensor,
+    cre_inputs: dict[str, torch.Tensor],
+    gene_chunk_size: int,
+) -> torch.Tensor:
+    """Compute full-panel STREAM MSE without materializing all genes at once."""
+
+    n_genes = target.shape[1]
+    if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
+        return mse_cfm_loss(model(x, **cre_inputs), target)
+    loss = target.new_tensor(0.0)
+    for start in range(0, n_genes, gene_chunk_size):
+        end = min(start + gene_chunk_size, n_genes)
+        gene_indices = torch.arange(start, end, device=x.device, dtype=torch.long)
+        pred = model(x, **cre_inputs, gene_indices=gene_indices)
+        loss = loss + mse_cfm_loss(pred, target[:, start:end]) * (end - start)
+    return loss / n_genes
+
+
 def train_steps(
     config,
     sampler,
@@ -67,9 +107,9 @@ def train_steps(
             )
             if cre_inputs is None:
                 pred = model(xt)
+                loss = mse_cfm_loss(pred, target)
             else:
-                pred = model(xt, **cre_inputs)
-            loss = mse_cfm_loss(pred, target)
+                loss = stream_chunked_loss(model, xt, target, cre_inputs, config.gene_chunk_size)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()

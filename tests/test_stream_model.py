@@ -100,6 +100,44 @@ def test_model_forward_variants(variant):
     assert out.shape == (batch, genes)
 
 
+@pytest.mark.parametrize("variant", ["film", "cross_attention"])
+def test_stream_chunked_prediction_matches_full_forward(variant):
+    torch = pytest.importorskip("torch")
+    from stream_model.models import StreamModel
+    from stream_model.train import predict_stream_chunked, stream_chunked_loss
+
+    batch = 2
+    genes = 7
+    model = StreamModel(
+        n_genes=genes,
+        cre_dim=8,
+        d_model=16,
+        n_heads=4,
+        n_layers=1,
+        variant=variant,
+        positional_encoding="rope",
+        n_context_tokens=2,
+    )
+    model.eval()
+    x = torch.randn(batch, genes)
+    target = torch.randn(batch, genes)
+    cre_inputs = {
+        "cre_embeddings": torch.randn(genes, 3, 8),
+        "cre_mask": torch.ones(genes, 3, dtype=torch.bool),
+        "signed_distance": torch.tensor([[0, 1000, -2000]] * genes, dtype=torch.float32),
+        "is_promoter": torch.zeros(genes, 3, dtype=torch.bool),
+    }
+    cre_inputs["is_promoter"][:, 0] = True
+
+    full = model(x, **cre_inputs)
+    chunked = predict_stream_chunked(model, x, cre_inputs, gene_chunk_size=3)
+    chunked_loss = stream_chunked_loss(model, x, target, cre_inputs, gene_chunk_size=3)
+    full_loss = torch.mean((full - target) ** 2)
+
+    assert torch.allclose(chunked, full, atol=1e-5)
+    assert torch.allclose(chunked_loss, full_loss, atol=1e-5)
+
+
 def test_evaluate_intervals_reports_full_and_subset_gene_sets():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch

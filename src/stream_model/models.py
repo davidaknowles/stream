@@ -94,7 +94,13 @@ class StreamModel(nn.Module):
         cre_mask: torch.Tensor,
         signed_distance: torch.Tensor,
         is_promoter: torch.Tensor,
+        gene_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if gene_indices is not None:
+            cre_embeddings = cre_embeddings.index_select(0, gene_indices)
+            cre_mask = cre_mask.index_select(0, gene_indices)
+            signed_distance = signed_distance.index_select(0, gene_indices)
+            is_promoter = is_promoter.index_select(0, gene_indices)
         gene_tokens = self.encode_cre(cre_embeddings, cre_mask, signed_distance, is_promoter)
         h = gene_tokens.unsqueeze(0).expand(x.shape[0], -1, -1, -1).contiguous()
         if self.variant == "film":

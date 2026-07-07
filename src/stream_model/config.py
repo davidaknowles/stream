@@ -34,6 +34,7 @@ class StreamConfig:
 
     expression_layer: str | None = None
     batch_size: int = 64
+    gene_chunk_size: int = 512
     ot_epsilon: float = 0.05
     ot_iterations: int = 80
     learning_rate: float = 1e-4

@@ -17,6 +17,8 @@ HVG_CSV="${HVG_CSV:-}"
 N_HVG="${N_HVG:-}"
 OUT_DIR="${OUT_DIR:-}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
+BATCH_SIZE="${BATCH_SIZE:-}"
+GENE_CHUNK_SIZE="${GENE_CHUNK_SIZE:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -38,4 +40,6 @@ if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
 if [[ -n "$WANDB_RUN_NAME" ]]; then args+=(--wandb-run-name "$WANDB_RUN_NAME"); fi
+if [[ -n "$BATCH_SIZE" ]]; then args+=(--batch-size "$BATCH_SIZE"); fi
+if [[ -n "$GENE_CHUNK_SIZE" ]]; then args+=(--gene-chunk-size "$GENE_CHUNK_SIZE"); fi
 "$STREAM_PYTHON" scripts/train_stream.py "${args[@]}"
