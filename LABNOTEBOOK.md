@@ -24,3 +24,4 @@
 
 - Updated STREAM architecture so both conditioning mechanisms are applied at every transformer layer. FiLM now uses layer-specific cell-state MLPs to produce scale/shift vectors after each CRE self-attention block. Cross-attention now uses layer-specific cell-state context-token MLPs and cross-attention modules after each CRE self-attention block.
 - Updated chunked STREAM training to backpropagate each gene chunk immediately. This avoids retaining autograd graphs for every gene chunk before a single backward pass.
+- Canceled the pending pre-layerwise queue chain and resubmitted jobs against commit `d6e4516`. Fresh jobs: 10k standard CFM eval `18730278`; smoke jobs FiLM `18730279` and cross-attention `18730280`; 5k FiLM train/eval `18730281`/`18730282`; 5k cross-attention train/eval `18730283`/`18730284`; 10k FiLM train/eval `18730285`/`18730286`; 10k cross-attention train/eval `18730287`/`18730288`.
