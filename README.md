@@ -1,71 +1,4 @@
-# stream
-
-Workflow code for EDA and STREAM modeling of the JAX AnnData files from the Shendure lab public backup.
-
-## Contents
-
-- `notebooks/jax_adata_eda.ipynb` - source notebook for dataset inventory, metadata exploration, embryonic staging summaries, and full-data UMAP.
-- `notebooks/jax_adata_eda_executed.ipynb` - executed notebook from the completed Slurm run.
-- `src/jax_adata_streaming.py` - reusable streaming helpers for metadata summaries and memory-bounded full-data UMAP.
-- `src/stream_model/` - PyTorch STREAM model, standard CFM baseline, CRE/TSS preprocessing, AlphaGenome embedding helpers, and minibatch OT utilities.
-- `slurm/run_jax_adata_eda.sbatch` - Slurm batch script for running the notebook on a compute node.
-- `slurm/run_stream_*.sbatch` - Slurm batch scripts for STREAM preprocessing, CRE embedding, training, and evaluation.
-- `notebooks/stream_scvelo_velocity_stream.ipynb` - scVelo velocity stream plots for standard CFM, FiLM STREAM, and cross-attention STREAM checkpoints.
-- `requirements-jax-adata-eda.txt` - Python dependencies for the analysis environment.
-- `requirements-stream.txt` - Python dependencies for the STREAM workflow.
-- `docs/main.tex` - model notes for STREAM.
-- `AGENTS.md` - notes for future coding agents working in this repo.
-
-Downloaded data, generated outputs, Slurm logs, and local virtual environments are intentionally not tracked by Git.
-
-## Data
-
-The expected local data directory is:
-
-```text
-downloads/adata/
-```
-
-Expected files:
-
-```text
-adata_JAX_dataset_1.h5ad
-adata_JAX_dataset_2.h5ad
-adata_JAX_dataset_3.h5ad
-adata_JAX_dataset_4.h5ad
-df_cell.csv
-df_gene.csv
-```
-
-These files are large and are ignored by `.gitignore`.
-
-## Environment
-
-On the NYGC cluster, create the local virtual environment with the same module used by the Slurm script:
-
-```bash
-module load Python/3.11.5-GCCcore-13.2.0
-python -m venv .venv-jax-adata-eda
-source .venv-jax-adata-eda/bin/activate
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements-jax-adata-eda.txt
-```
-
-## Run
-
-Submit the notebook execution through Slurm:
-
-```bash
-sbatch slurm/run_jax_adata_eda.sbatch
-```
-
-The script writes logs to `logs/` and outputs to:
-
-```text
-outputs/jax_adata_eda/
-```
-
-## STREAM Model
+## STREAM
 
 STREAM learns a continuous vector field for mouse development, but unlike a standard expression-only CFM model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
 
@@ -87,12 +20,6 @@ The implemented comparison includes:
 - STREAM with cross-attention conditioning on cell state.
 
 The FiLM variant maps cell state to feature-wise scale/shift parameters applied to regulatory token states. The cross-attention variant maps cell state to context tokens that regulatory tokens attend to. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
-
-The GPU Slurm scripts use `STREAM_PYTHON=$HOME/venv/torchfix/bin/python` by
-default when that venv exists, because the local `PyTorch/2.1.2-foss-2023b`
-module can fail to import torch on current nodes due to a missing
-`libibverbs.so.1` runtime. Override `STREAM_PYTHON` if a different working
-torch environment is desired.
 
 Prepare gene/TSS/CRE links:
 
@@ -159,6 +86,25 @@ STREAM outputs are written to:
 ```text
 outputs/stream/
 ```
+
+Workflow code for EDA and STREAM modeling of the JAX AnnData files from the Shendure lab public backup.
+
+## Contents
+
+- `notebooks/jax_adata_eda.ipynb` - source notebook for dataset inventory, metadata exploration, embryonic staging summaries, and full-data UMAP.
+- `notebooks/jax_adata_eda_executed.ipynb` - executed notebook from the completed Slurm run.
+- `src/jax_adata_streaming.py` - reusable streaming helpers for metadata summaries and memory-bounded full-data UMAP.
+- `src/stream_model/` - PyTorch STREAM model, standard CFM baseline, CRE/TSS preprocessing, AlphaGenome embedding helpers, and minibatch OT utilities.
+- `slurm/run_jax_adata_eda.sbatch` - Slurm batch script for running the notebook on a compute node.
+- `slurm/run_stream_*.sbatch` - Slurm batch scripts for STREAM preprocessing, CRE embedding, training, and evaluation.
+- `notebooks/stream_scvelo_velocity_stream.ipynb` - scVelo velocity stream plots for standard CFM, FiLM STREAM, and cross-attention STREAM checkpoints.
+- `requirements-jax-adata-eda.txt` - Python dependencies for the analysis environment.
+- `requirements-stream.txt` - Python dependencies for the STREAM workflow.
+- `docs/main.tex` - model notes for STREAM.
+- `AGENTS.md` - notes for future coding agents working in this repo.
+
+Downloaded data, generated outputs, Slurm logs, and local virtual environments are intentionally not tracked by Git.
+
 
 ## UMAP Strategy
 
