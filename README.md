@@ -1,6 +1,6 @@
 ## STREAM
 
-STREAM learns a continuous vector field for mouse development, but unlike a standard expression-only CFM model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
+STREAM learns a continuous vector field representing cellular dynamics, but unlike a standard expression-only model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
 
 1. Represent each cell as expression over a selected protein-coding HVG panel.
 2. Link cCREs to each gene if they fall within 100 kb of the gene TSS.
@@ -11,7 +11,7 @@ STREAM learns a continuous vector field for mouse development, but unlike a stan
 
 Every gene receives an explicit promoter token. If no linked cCRE is within 1 kb of the TSS, a synthetic promoter CRE centered on the TSS is inserted. This gives the model a consistent promoter readout location while still allowing distal CRE tokens to influence the promoter representation through self-attention.
 
-The model learns by conditional flow matching between neighboring developmental time points. Each minibatch contains cells from one adjacent interval, minibatch optimal transport couples cells across that interval, and the model regresses the velocity required to move from the earlier cell state to the later cell state.
+The model learns by conditional flow matching (CFM) between neighboring developmental time points. Each minibatch contains cells from one adjacent interval, minibatch optimal transport couples cells across that interval, and the model regresses the velocity required to move from the earlier cell state to the later cell state.
 
 The implemented comparison includes:
 
