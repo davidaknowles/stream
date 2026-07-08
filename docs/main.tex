@@ -17,7 +17,7 @@ We propose Sequence-conditioned Trajectories via Regulatory Element Matching (ST
 
 \section{Background}
 
-By training to predict diverse chromatin marks, sequence-to-function models learn representations $z_c$ of regulatory DNA sequences, in particular candidate cis-regulatory elements (cCRE). The representation ideally summarizes sequence features relevant to gene regulation, such as transcription factor motifs and higher-order sequence grammar. 
+By training to predict diverse chromatin marks, sequence-to-function models learn representations of regulatory DNA sequences, in particular candidate cis-regulatory elements (cCRE). The representation ideally summarizes sequence features relevant to gene regulation, such as transcription factor motifs and higher-order sequence grammar. 
 
 The state-of-the-art paradigm for learning ordinary differential equation (ODE) models parameterized by a continuous-time vector field is Conditional Flow Matching (CFM). The CFM ``trick'' is framing model training as a regression that fits target velocities along simple paths between data distributions at different time points. This avoids the high computational cost of forward simulating the ODE, enabling efficient, scalable training. For time-resolved single-cell data, this corresponds to fitting a vector field that transports cell-state distributions between observed time points.
 
