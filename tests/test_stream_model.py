@@ -138,6 +138,33 @@ def test_stream_chunked_prediction_matches_full_forward(variant):
     assert torch.allclose(chunked_loss, full_loss, atol=1e-5)
 
 
+@pytest.mark.parametrize("variant", ["film", "cross_attention"])
+def test_stream_conditioning_is_layerwise(variant):
+    torch = pytest.importorskip("torch")
+    from torch import nn
+    from stream_model.models import StreamModel
+
+    model = StreamModel(
+        n_genes=5,
+        cre_dim=8,
+        d_model=16,
+        n_heads=4,
+        n_layers=3,
+        variant=variant,
+        n_context_tokens=2,
+    )
+
+    assert isinstance(model.cre_encoder_layers, nn.ModuleList)
+    assert len(model.cre_encoder_layers) == 3
+    assert isinstance(model.cell_context, nn.ModuleList)
+    assert len(model.cell_context) == 3
+    if variant == "cross_attention":
+        assert isinstance(model.cross_attn, nn.ModuleList)
+        assert len(model.cross_attn) == 3
+    else:
+        assert model.cross_attn is None
+
+
 def test_evaluate_intervals_reports_full_and_subset_gene_sets():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch

@@ -80,6 +80,31 @@ def stream_chunked_loss(
     return loss / n_genes
 
 
+def backward_stream_chunked_loss(
+    model,
+    x: torch.Tensor,
+    target: torch.Tensor,
+    cre_inputs: dict[str, torch.Tensor],
+    gene_chunk_size: int,
+) -> float:
+    """Backpropagate full-panel STREAM MSE one gene chunk at a time."""
+
+    n_genes = target.shape[1]
+    if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
+        loss = mse_cfm_loss(model(x, **cre_inputs), target)
+        loss.backward()
+        return float(loss.detach().cpu())
+    total = 0.0
+    for start in range(0, n_genes, gene_chunk_size):
+        end = min(start + gene_chunk_size, n_genes)
+        gene_indices = torch.arange(start, end, device=x.device, dtype=torch.long)
+        pred = model(x, **cre_inputs, gene_indices=gene_indices)
+        loss = mse_cfm_loss(pred, target[:, start:end]) * ((end - start) / n_genes)
+        loss.backward()
+        total += float(loss.detach().cpu())
+    return total
+
+
 def train_steps(
     config,
     sampler,
@@ -105,15 +130,15 @@ def train_steps(
                 epsilon=config.ot_epsilon,
                 iterations=config.ot_iterations,
             )
+            optimizer.zero_grad(set_to_none=True)
             if cre_inputs is None:
                 pred = model(xt)
                 loss = mse_cfm_loss(pred, target)
+                loss.backward()
+                value = float(loss.detach().cpu())
             else:
-                loss = stream_chunked_loss(model, xt, target, cre_inputs, config.gene_chunk_size)
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+                value = backward_stream_chunked_loss(model, xt, target, cre_inputs, config.gene_chunk_size)
             optimizer.step()
-            value = float(loss.detach().cpu())
             row = {"epoch": epoch, "step": step, "loss": value}
             metrics.append(row)
             if wandb_run is not None:

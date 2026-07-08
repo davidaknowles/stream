@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import torch
 from torch import nn
 
@@ -57,32 +55,48 @@ class StreamModel(nn.Module):
         self.distance_proj = nn.Sequential(nn.Linear(1, d_model), nn.Tanh(), nn.Linear(d_model, d_model))
         self.promoter_embed = nn.Embedding(2, d_model)
         self.learned_pos = nn.Embedding(2049, d_model) if positional_encoding == "learned" else None
-        layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=4 * d_model,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
+        self.cre_encoder_layers = nn.ModuleList(
+            [
+                nn.TransformerEncoderLayer(
+                    d_model=d_model,
+                    nhead=n_heads,
+                    dim_feedforward=4 * d_model,
+                    dropout=dropout,
+                    activation="gelu",
+                    batch_first=True,
+                    norm_first=True,
+                )
+                for _ in range(n_layers)
+            ]
         )
-        self.cre_encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
 
         if variant == "film":
-            self.cell_context = nn.Sequential(
-                nn.Linear(n_genes, d_model),
-                nn.GELU(),
-                nn.Linear(d_model, 2 * d_model),
+            self.cell_context = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.Linear(n_genes, d_model),
+                        nn.GELU(),
+                        nn.Linear(d_model, 2 * d_model),
+                    )
+                    for _ in range(n_layers)
+                ]
             )
             self.cross_attn = None
         else:
-            self.cell_context = nn.Sequential(
-                nn.Linear(n_genes, d_model * n_context_tokens),
-                nn.GELU(),
-                nn.Linear(d_model * n_context_tokens, d_model * n_context_tokens),
+            self.cell_context = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.Linear(n_genes, d_model * n_context_tokens),
+                        nn.GELU(),
+                        nn.Linear(d_model * n_context_tokens, d_model * n_context_tokens),
+                    )
+                    for _ in range(n_layers)
+                ]
             )
             self.n_context_tokens = n_context_tokens
-            self.cross_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+            self.cross_attn = nn.ModuleList(
+                [nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True) for _ in range(n_layers)]
+            )
 
         self.norm = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, 1)
@@ -101,27 +115,34 @@ class StreamModel(nn.Module):
             cre_mask = cre_mask.index_select(0, gene_indices)
             signed_distance = signed_distance.index_select(0, gene_indices)
             is_promoter = is_promoter.index_select(0, gene_indices)
-        gene_tokens = self.encode_cre(cre_embeddings, cre_mask, signed_distance, is_promoter)
-        h = gene_tokens.unsqueeze(0).expand(x.shape[0], -1, -1, -1).contiguous()
-        if self.variant == "film":
-            gamma_beta = self.cell_context(x)
-            gamma, beta = gamma_beta.chunk(2, dim=-1)
-            h = h * (1.0 + gamma[:, None, None, :]) + beta[:, None, None, :]
-        else:
-            context = self.cell_context(x).reshape(x.shape[0], self.n_context_tokens, self.d_model)
-            q = h.reshape(x.shape[0], -1, self.d_model)
-            attn_out, _ = self.cross_attn(q, context, context, need_weights=False)
-            h = (q + attn_out).reshape_as(h)
+        h, padding_mask = self.embed_cre(cre_embeddings, cre_mask, signed_distance, is_promoter)
+        batch_size, n_genes, n_tokens = x.shape[0], h.shape[0], h.shape[1]
+        h = h.unsqueeze(0).expand(batch_size, -1, -1, -1).contiguous()
+        layer_padding_mask = padding_mask.unsqueeze(0).expand(batch_size, -1, -1).reshape(batch_size * n_genes, n_tokens)
+        for layer_index, layer in enumerate(self.cre_encoder_layers):
+            h = h.reshape(batch_size * n_genes, n_tokens, self.d_model)
+            h = layer(h, src_key_padding_mask=layer_padding_mask)
+            h = h.reshape(batch_size, n_genes, n_tokens, self.d_model)
+            if self.variant == "film":
+                gamma_beta = self.cell_context[layer_index](x)
+                gamma, beta = gamma_beta.chunk(2, dim=-1)
+                h = h * (1.0 + gamma[:, None, None, :]) + beta[:, None, None, :]
+            else:
+                context = self.cell_context[layer_index](x).reshape(batch_size, self.n_context_tokens, self.d_model)
+                q = h.reshape(batch_size, n_genes * n_tokens, self.d_model)
+                attn_out, _ = self.cross_attn[layer_index](q, context, context, need_weights=False)
+                h = (q + attn_out).reshape(batch_size, n_genes, n_tokens, self.d_model)
+            h = h.masked_fill(padding_mask[None, :, :, None], 0.0)
         promoter = self.norm(h[:, :, 0, :])
         return self.head(promoter).squeeze(-1)
 
-    def encode_cre(
+    def embed_cre(
         self,
         cre_embeddings: torch.Tensor,
         cre_mask: torch.Tensor,
         signed_distance: torch.Tensor,
         is_promoter: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         dist_scaled = signed_distance.float().unsqueeze(-1) / 100_000.0
         h = self.input_proj(cre_embeddings.float())
         h = h + self.distance_proj(dist_scaled)
@@ -132,8 +153,7 @@ class StreamModel(nn.Module):
         elif self.positional_encoding == "rope":
             h = apply_rope(h, signed_distance.float())
         padding_mask = ~cre_mask.bool()
-        encoded = self.cre_encoder(h, src_key_padding_mask=padding_mask)
-        return encoded.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+        return h.masked_fill(padding_mask.unsqueeze(-1), 0.0), padding_mask
 
 
 def apply_rope(x: torch.Tensor, positions: torch.Tensor, base: float = 10_000.0) -> torch.Tensor:

@@ -52,29 +52,33 @@ E_p[p_{gm}] +
 $$
 where $W_z$ projects AlphaGenome embeddings to the model width, $\phi_d$ is a small MLP for signed distance, $E_p$ is a learned promoter/non-promoter embedding, and $\phi_{\mathrm{pos}}$ is optional positional information. In the current code, $\phi_{\mathrm{pos}}$ can be absent, a learned binned-distance embedding, or RoPE applied to token features using signed distance. Padding tokens are masked in all self-attention layers.
 
-The gene regulatory sequence is encoded by a shared transformer,
+The gene regulatory sequence is encoded by a shared transformer whose layers are interleaved with cell-state conditioning,
 $$
-H_g = \mathrm{TransformerEnc}(e_{g1}^{(0)}, \ldots, e_{gM}^{(0)}),
+H_{bg:}^{(\ell + 1)} =
+\mathrm{Cond}^{(\ell)}
+\left(
+\mathrm{TransformerLayer}^{(\ell)}(H_{bg:}^{(\ell)}), x_{bt}
+\right),
 $$
-with the same parameters used for every gene. This weight sharing is important: the model must learn regulatory grammar that transfers across genes rather than assigning each gene a free velocity parameter. The default mouse development configuration uses model width 256, 8 attention heads, 4 transformer layers, dropout 0.1, and at most 32 CRE/promoter tokens per gene.
+where $H_{g:}^{(0)} = (e_{g1}^{(0)}, \ldots, e_{gM}^{(0)})$ is broadcast across cells in the minibatch and $\ell$ indexes transformer layers. The same layer parameters are used for every gene. This weight sharing is important: the model must learn regulatory grammar that transfers across genes rather than assigning each gene a free velocity parameter. The default mouse development configuration uses model width 256, 8 attention heads, 4 transformer layers, dropout 0.1, and at most 32 CRE/promoter tokens per gene.
 
-The cell state $x_t$ is incorporated after CRE self-attention. This makes $f$ both sequence dependent and state dependent. Two conditioning mechanisms are implemented:
+The cell state $x_t$ is incorporated at every transformer layer. This makes $f$ both sequence dependent and state dependent throughout regulatory token processing. Two conditioning mechanisms are implemented:
 
-\paragraph{FiLM conditioning.} A cell-state MLP maps $x_t$ to feature-wise scale and shift vectors,
+\paragraph{FiLM conditioning.} At each transformer layer $\ell$, a layer-specific cell-state MLP maps $x_t$ to feature-wise scale and shift vectors,
 $$
-(\gamma(x_t), \beta(x_t)) = h_{\mathrm{FiLM}}(x_t), \qquad
-\tilde H_{bgm} = H_{gm} \odot (1 + \gamma_b) + \beta_b,
+(\gamma^{(\ell)}(x_t), \beta^{(\ell)}(x_t)) = h_{\mathrm{FiLM}}^{(\ell)}(x_t), \qquad
+H_{bgm}^{(\ell + 1)} = U_{bgm}^{(\ell)} \odot (1 + \gamma_b^{(\ell)}) + \beta_b^{(\ell)},
 $$
-for cell $b$, gene $g$, and token $m$. A layer normalization and scalar head are then applied only to the promoter token,
+for cell $b$, gene $g$, token $m$, and transformer output $U^{(\ell)}$. A layer normalization and scalar head are then applied only to the final promoter token,
 $$
-f_g(x_t,\mathbf{Z}_g) = w^\top \mathrm{LN}(\tilde H_{bg0}) + b.
+f_g(x_t,\mathbf{Z}_g) = w^\top \mathrm{LN}(H_{bg0}^{(L)}) + b.
 $$
 
-\paragraph{Cross-attention conditioning.} A cell-state MLP maps $x_t$ to a small set of context tokens $C_b \in \mathbb{R}^{L \times D}$, with $L=8$ by default. Regulatory tokens query these context tokens,
+\paragraph{Cross-attention conditioning.} At each transformer layer $\ell$, a layer-specific cell-state MLP maps $x_t$ to a small set of context tokens $C_b^{(\ell)} \in \mathbb{R}^{L_c \times D}$, with $L_c=8$ by default. Regulatory tokens query these context tokens after CRE self-attention,
 $$
-\tilde H_{bg:} =
-H_{g:} +
-\mathrm{MHA}(Q=H_{g:}, K=C_b, V=C_b),
+H_{bg:}^{(\ell + 1)} =
+U_{bg:}^{(\ell)} +
+\mathrm{MHA}^{(\ell)}(Q=U_{bg:}^{(\ell)}, K=C_b^{(\ell)}, V=C_b^{(\ell)}),
 $$
 and the same promoter-token scalar head gives $f_g(x_t,\mathbf{Z}_g)$. This variant allows each gene's regulatory tokens to extract different information from the global cell state.
 

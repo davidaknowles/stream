@@ -19,3 +19,8 @@
 - Canceled stale dependent eval jobs `18709013`, `18709015`, `18709021`, and `18709023`, which were pending with `DependencyNeverSatisfied`.
 - Added gene-chunked STREAM prediction and loss computation. STREAM training and evaluation now process genes in configurable chunks (`gene_chunk_size`, default 512), preserving the same full-panel MSE objective while avoiding the full batch-by-gene activation tensor.
 - Submitted guarded STREAM restart chain with `BATCH_SIZE=32` and `GENE_CHUNK_SIZE=512`. Smoke jobs: FiLM `18712595`, cross-attention `18712596`. Full jobs depend on those smoke jobs: 5k FiLM train/eval `18712617`/`18712618`, 5k cross-attention train/eval `18712619`/`18712620`, 10k FiLM train/eval `18712621`/`18712622`, and 10k cross-attention train/eval `18712623`/`18712624`.
+
+## 2026-07-08
+
+- Updated STREAM architecture so both conditioning mechanisms are applied at every transformer layer. FiLM now uses layer-specific cell-state MLPs to produce scale/shift vectors after each CRE self-attention block. Cross-attention now uses layer-specific cell-state context-token MLPs and cross-attention modules after each CRE self-attention block.
+- Updated chunked STREAM training to backpropagate each gene chunk immediately. This avoids retaining autograd graphs for every gene chunk before a single backward pass.

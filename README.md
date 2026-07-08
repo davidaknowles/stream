@@ -19,7 +19,7 @@ The implemented comparison includes:
 - STREAM with FiLM conditioning on cell state;
 - STREAM with cross-attention conditioning on cell state.
 
-The FiLM variant maps cell state to feature-wise scale/shift parameters applied to regulatory token states. The cross-attention variant maps cell state to context tokens that regulatory tokens attend to. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
+The FiLM variant maps cell state to layer-specific feature-wise scale/shift parameters applied after each regulatory token transformer layer. The cross-attention variant maps cell state to layer-specific context tokens that regulatory tokens attend to after each transformer layer. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
 
 Prepare gene/TSS/CRE links:
 
