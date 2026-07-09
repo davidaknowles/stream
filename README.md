@@ -1,10 +1,10 @@
-## STREAM
+## Unifying Sequence-to-Function Models with Continuous Flow Matching with STREAM
 
-STREAM learns a continuous vector field representing cellular dynamics, but unlike a standard expression-only model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
+We propose Sequence-conditioned Trajectories via Regulatory Element Matching (STREAM). STREAM learns a continuous vector field representing cellular dynamics, but unlike a standard expression-only model it conditions each gene's predicted velocity on that gene's regulatory sequence context. The core idea is:
 
 1. Represent each cell as expression over a selected protein-coding HVG panel.
-2. Link cCREs to each gene if they fall within 100 kb of the gene TSS.
-3. Embed each linked CRE/promoter sequence with AlphaGenome.
+2. Link cCREs to each gene based on distance to TSS (default 100kb) or HiC. 
+3. Embed each linked CRE/promoter sequence with a sequence-to-function model (e.g., AlphaGenome). 
 4. Treat the CREs for a gene as regulatory tokens processed by a shared transformer.
 5. Condition those regulatory tokens on the current global cell state.
 6. Read each gene's velocity from the final promoter-token representation.
