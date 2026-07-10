@@ -7,12 +7,19 @@ from torch import nn
 
 
 class StandardCFM(nn.Module):
-    """Expression-only CFM baseline using the same selected genes."""
+    """CFM vector field mapping a cell-state representation to expression velocity."""
 
-    def __init__(self, n_genes: int, hidden_dim: int = 512, n_layers: int = 3, dropout: float = 0.1):
+    def __init__(
+        self,
+        n_genes: int,
+        hidden_dim: int = 512,
+        n_layers: int = 3,
+        dropout: float = 0.1,
+        state_dim: int | None = None,
+    ):
         super().__init__()
         layers: list[nn.Module] = []
-        dim = n_genes
+        dim = state_dim or n_genes
         for _ in range(n_layers):
             layers.extend([nn.Linear(dim, hidden_dim), nn.GELU(), nn.Dropout(dropout)])
             dim = hidden_dim
@@ -41,6 +48,7 @@ class StreamModel(nn.Module):
         variant: str = "film",
         positional_encoding: str = "rope",
         n_context_tokens: int = 8,
+        state_dim: int | None = None,
     ):
         super().__init__()
         if variant not in {"film", "cross_attention"}:
@@ -48,6 +56,7 @@ class StreamModel(nn.Module):
         if positional_encoding not in {"none", "learned", "rope"}:
             raise ValueError("positional_encoding must be none, learned, or rope")
         self.n_genes = n_genes
+        self.state_dim = state_dim or n_genes
         self.d_model = d_model
         self.variant = variant
         self.positional_encoding = positional_encoding
@@ -74,7 +83,7 @@ class StreamModel(nn.Module):
             self.cell_context = nn.ModuleList(
                 [
                     nn.Sequential(
-                        nn.Linear(n_genes, d_model),
+                        nn.Linear(self.state_dim, d_model),
                         nn.GELU(),
                         nn.Linear(d_model, 2 * d_model),
                     )
@@ -86,7 +95,7 @@ class StreamModel(nn.Module):
             self.cell_context = nn.ModuleList(
                 [
                     nn.Sequential(
-                        nn.Linear(n_genes, d_model * n_context_tokens),
+                        nn.Linear(self.state_dim, d_model * n_context_tokens),
                         nn.GELU(),
                         nn.Linear(d_model * n_context_tokens, d_model * n_context_tokens),
                     )

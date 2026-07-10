@@ -69,6 +69,20 @@ def test_ot_and_cfm_shapes():
     assert tau.shape == (4, 1)
 
 
+def test_ot_cfm_interpolates_auxiliary_state_with_expression_pairs():
+    torch = pytest.importorskip("torch")
+    from stream_model.ot import ot_cfm_batch_with_state
+
+    x0 = torch.tensor([[0.0, 1.0]])
+    x1 = torch.tensor([[2.0, 3.0]])
+    state0 = torch.tensor([[10.0, 20.0, 30.0]])
+    state1 = torch.tensor([[30.0, 40.0, 50.0]])
+    xt, target, tau, state_t = ot_cfm_batch_with_state(x0, x1, state0, state1, 8.5, 9.0)
+    assert xt.shape == target.shape == (1, 2)
+    assert state_t.shape == (1, 3)
+    assert torch.allclose(state_t, (1 - tau) * state0 + tau * state1)
+
+
 @pytest.mark.parametrize("variant", ["standard_cfm", "film", "cross_attention"])
 def test_model_forward_variants(variant):
     torch = pytest.importorskip("torch")
@@ -76,9 +90,10 @@ def test_model_forward_variants(variant):
 
     batch = 2
     genes = 4
-    x = torch.randn(batch, genes)
+    state_dim = genes + 1
+    x = torch.randn(batch, state_dim)
     if variant == "standard_cfm":
-        model = StandardCFM(n_genes=genes, hidden_dim=16, n_layers=1)
+        model = StandardCFM(n_genes=genes, hidden_dim=16, n_layers=1, state_dim=state_dim)
         out = model(x)
     else:
         model = StreamModel(
@@ -90,6 +105,7 @@ def test_model_forward_variants(variant):
             variant="cross_attention" if variant == "cross_attention" else "film",
             positional_encoding="rope",
             n_context_tokens=2,
+            state_dim=state_dim,
         )
         cre_embeddings = torch.randn(genes, 3, 8)
         mask = torch.ones(genes, 3, dtype=torch.bool)
@@ -165,6 +181,23 @@ def test_stream_conditioning_is_layerwise(variant):
         assert model.cross_attn is None
 
 
+def test_uce_sentence_uses_chromosome_delimiters_and_sorted_positions():
+    sparse = pytest.importorskip("scipy.sparse")
+    from stream_model.uce import UCE_CHROM_CLOSE_TOKEN, UCE_CHROM_TOKEN_OFFSET, UCE_CLS_TOKEN, UCEGeneMetadata, sample_uce_sentence
+
+    row = sparse.csr_matrix([[1.0, 8.0, 2.0, 4.0]])[0]
+    metadata = UCEGeneMetadata(
+        token_ids=np.array([10, 11, 12, -1]),
+        chrom_ids=np.array([1, 0, 1, -1]),
+        starts=np.array([30, 20, 10, -1]),
+    )
+    sentence = sample_uce_sentence(row, metadata, np.random.default_rng(2), sample_size=12)
+    assert sentence is not None
+    assert sentence[0] == UCE_CLS_TOKEN
+    assert np.count_nonzero(sentence == UCE_CHROM_CLOSE_TOKEN) == 2
+    assert set(sentence[1:]) >= {UCE_CHROM_TOKEN_OFFSET, UCE_CHROM_TOKEN_OFFSET + 1, 10, 11, 12}
+
+
 def test_evaluate_intervals_reports_full_and_subset_gene_sets():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch
@@ -206,3 +239,32 @@ def test_evaluate_intervals_reports_full_and_subset_gene_sets():
         ("legacy", 2),
     }
     assert len(metrics) == 4
+
+
+def test_evaluate_intervals_uses_auxiliary_state_with_expression_target():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.evaluate import evaluate_intervals
+
+    class Config:
+        ot_epsilon = 0.1
+        ot_iterations = 10
+        cell_state = "uce"
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((2, 3), dtype=np.float32),
+                x1=np.ones((2, 3), dtype=np.float32),
+                state0=np.zeros((2, 5), dtype=np.float32),
+                state1=np.ones((2, 5), dtype=np.float32),
+                t0=8.5,
+                t1=9.0,
+                day0="E8.5",
+                day1="E9.0",
+            )
+
+    model = torch.nn.Linear(5, 3)
+    metrics = evaluate_intervals(Config(), Sampler(), model, n_batches=1)
+    assert metrics.loc[0, "cell_state"] == "uce"
+    assert metrics.loc[0, "n_eval_genes"] == 3

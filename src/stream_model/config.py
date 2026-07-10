@@ -33,6 +33,9 @@ class StreamConfig:
     alphagenome_organism_index: int = 1
 
     expression_layer: str | None = None
+    cell_state: str = "expression"
+    uce_embedding_dir: Path = Path("outputs/uce/embeddings")
+    uce_embedding_dim: int = 1280
     batch_size: int = 64
     gene_chunk_size: int = 512
     ot_epsilon: float = 0.05
@@ -77,6 +80,7 @@ class StreamConfig:
             "fasta",
             "out_dir",
             "alphagenome_repo",
+            "uce_embedding_dir",
         ):
             value = getattr(cfg, name)
             setattr(cfg, name, cfg.resolve_path(value))
@@ -107,6 +111,9 @@ def apply_config_overrides(
     n_hvg: int | None = None,
     out_dir: str | Path | None = None,
     wandb_run_name: str | None = None,
+    cell_state: str | None = None,
+    uce_embedding_dir: str | Path | None = None,
+    wandb_mode: str | None = None,
 ) -> StreamConfig:
     """Apply common CLI overrides after loading a YAML config."""
 
@@ -118,4 +125,12 @@ def apply_config_overrides(
         cfg.out_dir = cfg.resolve_path(out_dir)
     if wandb_run_name is not None:
         cfg.wandb_run_name = wandb_run_name
+    if cell_state is not None:
+        if cell_state not in {"expression", "uce"}:
+            raise ValueError("cell_state must be expression or uce")
+        cfg.cell_state = cell_state
+    if uce_embedding_dir is not None:
+        cfg.uce_embedding_dir = cfg.resolve_path(uce_embedding_dir)
+    if wandb_mode is not None:
+        cfg.wandb_mode = wandb_mode
     return cfg

@@ -21,6 +21,8 @@ The implemented comparison includes:
 
 The FiLM variant maps cell state to layer-specific feature-wise scale/shift parameters applied after each regulatory token transformer layer. The cross-attention variant maps cell state to layer-specific context tokens that regulatory tokens attend to after each transformer layer. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
 
+The cell-state input can be the expression panel or a frozen 33-layer UCE embedding. In the UCE setting, OT, CFM interpolation, and target velocity remain in expression space. The UCE representations of the matched endpoints are interpolated with the same CFM time and supplied to the vector field. This tests whether a foundation-model state representation improves prediction without redefining the expression-space dynamics.
+
 Prepare gene/TSS/CRE links:
 
 ```bash
@@ -58,6 +60,14 @@ VARIANT=standard_cfm sbatch slurm/run_stream_train.sbatch
 VARIANT=film sbatch slurm/run_stream_train.sbatch
 VARIANT=cross_attention sbatch slurm/run_stream_train.sbatch
 ```
+
+Generate a streamed UCE cache, then submit the 5k/10k UCE-state comparison:
+
+```bash
+bash scripts/submit_uce_stream_reruns.sh
+```
+
+The UCE cache uses BF16 and groups cells by exact token length before model evaluation. This avoids padding masks and enables PyTorch Flash Attention. It writes one float16 embedding matrix per AnnData file; training and evaluation load these matrices as memory maps.
 
 For larger STREAM panels, training and evaluation predict genes in chunks to
 avoid materializing the full `[batch, genes, CRE tokens, hidden]` activation

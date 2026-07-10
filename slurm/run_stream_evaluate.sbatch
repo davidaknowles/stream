@@ -19,6 +19,8 @@ OUT_DIR="${OUT_DIR:-}"
 EVAL_GENE_SUBSET="${EVAL_GENE_SUBSET:-}"
 BATCH_SIZE="${BATCH_SIZE:-}"
 GENE_CHUNK_SIZE="${GENE_CHUNK_SIZE:-}"
+CELL_STATE="${CELL_STATE:-}"
+UCE_EMBEDDING_DIR="${UCE_EMBEDDING_DIR:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -37,4 +39,6 @@ if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
 if [[ -n "$EVAL_GENE_SUBSET" ]]; then args+=(--eval-gene-subset "$EVAL_GENE_SUBSET"); fi
 if [[ -n "$BATCH_SIZE" ]]; then args+=(--batch-size "$BATCH_SIZE"); fi
 if [[ -n "$GENE_CHUNK_SIZE" ]]; then args+=(--gene-chunk-size "$GENE_CHUNK_SIZE"); fi
+if [[ -n "$CELL_STATE" ]]; then args+=(--cell-state "$CELL_STATE"); fi
+if [[ -n "$UCE_EMBEDDING_DIR" ]]; then args+=(--uce-embedding-dir "$UCE_EMBEDDING_DIR"); fi
 "$STREAM_PYTHON" scripts/evaluate_stream.py "${args[@]}"

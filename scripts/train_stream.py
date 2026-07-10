@@ -11,7 +11,7 @@ import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
-from stream_model.train import build_model, load_cre_npz, train_steps
+from stream_model.train import artifact_stem, build_model, load_cre_npz, train_steps
 
 
 def main() -> None:
@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--wandb-run-name", default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--gene-chunk-size", type=int, default=None)
+    parser.add_argument("--cell-state", choices=["expression", "uce"], default=None)
+    parser.add_argument("--uce-embedding-dir", default=None)
+    parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -35,6 +38,9 @@ def main() -> None:
         n_hvg=args.n_hvg,
         out_dir=args.out_dir,
         wandb_run_name=args.wandb_run_name,
+        cell_state=args.cell_state,
+        uce_embedding_dir=args.uce_embedding_dir,
+        wandb_mode=args.wandb_mode,
     )
     if args.variant is not None:
         cfg.model_variant = args.variant
@@ -57,6 +63,8 @@ def main() -> None:
         [tuple(interval) for interval in split["train_intervals"]],
         batch_size=cfg.batch_size,
         seed=cfg.seed,
+        state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" else None,
+        state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
     )
 
     cre_inputs = None
@@ -70,14 +78,14 @@ def main() -> None:
     if cfg.use_wandb:
         import wandb
 
-        run_name = cfg.wandb_run_name or f"{cfg.model_variant}_{len(gene_ids)}genes_heldout_timepoints"
+        run_name = cfg.wandb_run_name or f"{artifact_stem(cfg)}_{len(gene_ids)}genes_heldout_timepoints"
         wandb_run = wandb.init(
             project=cfg.wandb_project,
             entity=cfg.wandb_entity,
             mode=cfg.wandb_mode,
             name=run_name,
             config=cfg.to_dict(),
-            tags=["stream", cfg.model_variant, "mouse_dev"],
+            tags=["stream", cfg.model_variant, cfg.cell_state, "mouse_dev"],
         )
     metrics = train_steps(
         cfg,
@@ -89,8 +97,9 @@ def main() -> None:
         wandb_run=wandb_run,
     )
 
-    metrics_path = cfg.out_dir / f"train_metrics_{cfg.model_variant}.csv"
-    ckpt_path = cfg.out_dir / f"model_{cfg.model_variant}.pt"
+    stem = artifact_stem(cfg)
+    metrics_path = cfg.out_dir / f"train_metrics_{stem}.csv"
+    ckpt_path = cfg.out_dir / f"model_{stem}.pt"
     pd.DataFrame(metrics).to_csv(metrics_path, index=False)
     torch.save({"model": model.state_dict(), "config": cfg.to_dict()}, ckpt_path)
     if wandb_run is not None:

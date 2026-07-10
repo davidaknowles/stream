@@ -12,7 +12,7 @@ import torch
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
 from stream_model.evaluate import evaluate_intervals
-from stream_model.train import build_model, load_cre_npz
+from stream_model.train import artifact_stem, build_model, load_cre_npz
 
 
 def _load_eval_gene_sets(gene_ids: list[str], specs: list[str], cfg: StreamConfig) -> dict[str, list[int] | None]:
@@ -51,11 +51,20 @@ def main() -> None:
     parser.add_argument("--batches", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--gene-chunk-size", type=int, default=None)
+    parser.add_argument("--cell-state", choices=["expression", "uce"], default=None)
+    parser.add_argument("--uce-embedding-dir", default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
     cfg = StreamConfig.from_yaml(args.config)
-    apply_config_overrides(cfg, hvg_csv=args.hvg_csv, n_hvg=args.n_hvg, out_dir=args.out_dir)
+    apply_config_overrides(
+        cfg,
+        hvg_csv=args.hvg_csv,
+        n_hvg=args.n_hvg,
+        out_dir=args.out_dir,
+        cell_state=args.cell_state,
+        uce_embedding_dir=args.uce_embedding_dir,
+    )
     cfg.model_variant = args.variant
     if args.batch_size is not None:
         cfg.batch_size = args.batch_size
@@ -75,6 +84,8 @@ def main() -> None:
         [tuple(interval) for interval in eval_intervals],
         batch_size=cfg.batch_size,
         seed=cfg.seed + 1,
+        state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" else None,
+        state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
     )
 
     cre_inputs = None
@@ -83,7 +94,8 @@ def main() -> None:
         cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
-    ckpt = torch.load(cfg.out_dir / f"model_{cfg.model_variant}.pt", map_location=device)
+    stem = artifact_stem(cfg)
+    ckpt = torch.load(cfg.out_dir / f"model_{stem}.pt", map_location=device)
     model.load_state_dict(ckpt["model"])
     eval_gene_sets = _load_eval_gene_sets(gene_ids, args.eval_gene_subset, cfg)
     metrics = evaluate_intervals(
@@ -94,7 +106,7 @@ def main() -> None:
         n_batches=args.batches,
         eval_gene_sets=eval_gene_sets,
     )
-    out = cfg.out_dir / f"eval_metrics_{cfg.model_variant}.csv"
+    out = cfg.out_dir / f"eval_metrics_{stem}.csv"
     metrics.to_csv(out, index=False)
     print(metrics.groupby(["eval_gene_set", "day0", "day1"]).mean(numeric_only=True))
     print(f"Wrote {out}")

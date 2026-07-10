@@ -21,6 +21,9 @@ alphagenome_sequence_bp: 131072
 alphagenome_batch_size: 16
 alphagenome_organism_index: 1
 
+cell_state: expression
+uce_embedding_dir: outputs/uce/embeddings
+uce_embedding_dim: 1280
 batch_size: 64
 ot_epsilon: 0.05
 ot_iterations: 80

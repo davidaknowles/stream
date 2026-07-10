@@ -92,6 +92,10 @@ The implementation does not use a learned gene identity embedding by default. Ge
 
 \paragraph{Expression-only baseline.} The standard CFM baseline uses the same selected genes, same minibatch OT coupling, same interpolation path, and same target velocity, but replaces the sequence-conditioned gene module with an MLP $f_{\mathrm{CFM}}(x_t): \mathbb{R}^G \rightarrow \mathbb{R}^G$. This isolates the contribution of CRE/AlphaGenome conditioning from the flow matching training setup.
 
+\paragraph{UCE cell-state ablation.} We additionally evaluate a frozen 33-layer Universal Cell Embedding (UCE) representation $u=E(x)\in\mathbb{R}^{1280}$ as the input state to the vector field. OT is still solved using the selected expression panel, and the target velocity remains expression-valued. After sampling an OT pair $(x_k,x_{k+1})$ and a CFM time $\tau$, we interpolate both spaces with the same pair and time:
+$$x_t=(1-\tau)x_k+\tau x_{k+1},\qquad u_t=(1-\tau)E(x_k)+\tau E(x_{k+1}).$$
+The UCE baseline predicts expression velocity as $f_{\mathrm{CFM}}(u_t):\mathbb{R}^{1280}\rightarrow\mathbb{R}^{G}$; FiLM and cross-attention STREAM use $u_t$ in every layer-specific conditioning module while retaining the same CRE inputs and expression-valued promoter-token outputs. Thus UCE changes the state representation supplied to $f$, not the state space in which the dynamics or loss are defined.
+
 \paragraph{Sequential Flow Matching Objective.} To fit $f$ across multiple time points, we match it to a target marginal vector field $\hat{f}_t$. We define independent flow matching objectives between consecutive time points $[t_k, t_{k+1}]$. Let $x_k \sim p_k(x)$ and $x_{k+1} \sim p_{k+1}(x)$ be sampled from the empirical distributions. We construct a linear path mapping $x_k$ to $x_{k+1}$. For $t \in [t_k, t_{k+1}]$, define the normalized time step $\tau = \frac{t - t_k}{t_{k+1} - t_k}$.
 
 The interpolated state $x_t$ is:
@@ -101,7 +105,8 @@ The target conditional vector field, representing the velocity required to move 
 $$ \hat{f}_t = \frac{x_{k+1} - x_k}{t_{k+1} - t_k} $$
 
 The unified Conditional Flow Matching (CFM) objective minimizes the expected squared difference between the sequence-conditioned network $f$ and the target vector field $\hat{f}_t$ across all consecutive time intervals:
-$$ \mathcal{L}(f) = \sum_{k=0}^{K-1} \mathbb{E}_{t \sim \mathcal{U}[t_k, t_{k+1}], \; x_k, x_{k+1} \sim p_{data}(x_k, x_{k+1})} \left[ \left\| f(x_t, \{\mathbf{Z}_g\}_{g=1}^G) - \hat{f}_t \right\|^2 \right] $$
+$$ \mathcal{L}(f) = \sum_{k=0}^{K-1} \mathbb{E}_{t \sim \mathcal{U}[t_k, t_{k+1}], \; x_k, x_{k+1} \sim p_{data}(x_k, x_{k+1})} \left[ \left\| f(s_t, \{\mathbf{Z}_g\}_{g=1}^G) - \hat{f}_t \right\|^2 \right] $$
+where $s_t=x_t$ for the expression-state experiments and $s_t=u_t$ for the UCE-state ablation.
 
 While it is valid to use the trivial joint distribution $p_{data}(x_k, x_{k+1}) = p_{k}(x_k) p_{k+1}(x_{k+1})$, STREAM uses minibatch optimal transport to couple cells between neighboring time points. Each minibatch contains cells from exactly one interval $(t_k,t_{k+1})$. A pairwise cost is computed between sampled cells at $t_k$ and sampled cells at $t_{k+1}$, an entropic OT coupling is solved on the minibatch, and training pairs are sampled from the resulting coupling.
 
@@ -113,7 +118,7 @@ AlphaGenome embeddings are computed once and cached. The implementation uses the
 
 \section{Baseline and evaluation}
 
-STREAM is compared against a standard expression-only CFM baseline. The baseline uses the same selected genes, same neighboring-time minibatch sampler, same minibatch OT coupling, same interpolation path, and same velocity target, but it does not receive cCRE or AlphaGenome inputs.
+STREAM is compared against a standard expression-only CFM baseline. The baseline uses the same selected genes, same neighboring-time minibatch sampler, same minibatch OT coupling, same interpolation path, and same velocity target, but it does not receive cCRE or AlphaGenome inputs. Both baseline and STREAM are run with expression-state and UCE-state inputs, with UCE results written separately from expression-state checkpoints.
 
 Evaluation is performed on held-out time points. Whole embryonic days are removed from training intervals. Training uses only adjacent intervals whose two endpoints are both training time points. Evaluation reports held-out-timepoint losses and rollout diagnostics on intervals adjacent to or involving held-out days when those endpoints are available. This directly tests temporal generalization rather than embryo-level generalization.
 

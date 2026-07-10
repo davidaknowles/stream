@@ -70,3 +70,30 @@ def ot_cfm_batch(
         coupling = sinkhorn_coupling(pairwise_squared_cost(x0, x1), epsilon=epsilon, iterations=iterations)
         i0, i1 = sample_coupling_pairs(coupling, min(x0.shape[0], x1.shape[0]))
     return cfm_interpolate(x0[i0], x1[i1], t0, t1)
+
+
+def ot_cfm_batch_with_state(
+    x0: torch.Tensor,
+    x1: torch.Tensor,
+    state0: torch.Tensor,
+    state1: torch.Tensor,
+    t0: float,
+    t1: float,
+    epsilon: float = 0.05,
+    iterations: int = 80,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Couple expression states by OT and interpolate an aligned state representation.
+
+    OT and the CFM velocity target stay in expression space. ``state0`` and
+    ``state1`` are row-aligned auxiliary cell representations, such as UCE,
+    which are interpolated with the same sampled OT pairs and CFM time.
+    """
+
+    if state0.shape[0] != x0.shape[0] or state1.shape[0] != x1.shape[0]:
+        raise ValueError("Auxiliary states must align with expression batch rows")
+    with torch.no_grad():
+        coupling = sinkhorn_coupling(pairwise_squared_cost(x0, x1), epsilon=epsilon, iterations=iterations)
+        i0, i1 = sample_coupling_pairs(coupling, min(x0.shape[0], x1.shape[0]))
+    xt, target, tau = cfm_interpolate(x0[i0], x1[i1], t0, t1)
+    state_t = (1.0 - tau) * state0[i0] + tau * state1[i1]
+    return xt, target, tau, state_t
