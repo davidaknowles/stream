@@ -25,3 +25,8 @@
 - Updated STREAM architecture so both conditioning mechanisms are applied at every transformer layer. FiLM now uses layer-specific cell-state MLPs to produce scale/shift vectors after each CRE self-attention block. Cross-attention now uses layer-specific cell-state context-token MLPs and cross-attention modules after each CRE self-attention block.
 - Updated chunked STREAM training to backpropagate each gene chunk immediately. This avoids retaining autograd graphs for every gene chunk before a single backward pass.
 - Canceled the pending pre-layerwise queue chain and resubmitted jobs against commit `d6e4516`. Fresh jobs: 10k standard CFM eval `18730278`; smoke jobs FiLM `18730279` and cross-attention `18730280`; 5k FiLM train/eval `18730281`/`18730282`; 5k cross-attention train/eval `18730283`/`18730284`; 10k FiLM train/eval `18730285`/`18730286`; 10k cross-attention train/eval `18730287`/`18730288`.
+
+## 2026-07-09
+
+- Checked layerwise job status. The 10k standard CFM eval `18730278` completed and wrote `outputs/stream_hvg10000/eval_metrics_standard_cfm.csv`. The 5k layerwise smoke jobs `18730279` and `18730280` completed, but full layerwise STREAM jobs with `BATCH_SIZE=32` and `GENE_CHUNK_SIZE=512` failed from CUDA OOM; dependent evals were left with `DependencyNeverSatisfied`.
+- Canceled the stuck dependent evals `18730282`, `18730284`, `18730286`, and `18730288`. Resubmitted lower-memory layerwise STREAM jobs using `BATCH_SIZE=8` and `GENE_CHUNK_SIZE=256`: 5k FiLM train/eval `18755345`/`18755346`, 5k cross-attention train/eval `18755347`/`18755348`, 10k FiLM smoke/train/eval `18755349`/`18755351`/`18755352`, and 10k cross-attention smoke/train/eval `18755350`/`18755353`/`18755354`.
