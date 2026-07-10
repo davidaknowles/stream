@@ -30,3 +30,8 @@
 
 - Checked layerwise job status. The 10k standard CFM eval `18730278` completed and wrote `outputs/stream_hvg10000/eval_metrics_standard_cfm.csv`. The 5k layerwise smoke jobs `18730279` and `18730280` completed, but full layerwise STREAM jobs with `BATCH_SIZE=32` and `GENE_CHUNK_SIZE=512` failed from CUDA OOM; dependent evals were left with `DependencyNeverSatisfied`.
 - Canceled the stuck dependent evals `18730282`, `18730284`, `18730286`, and `18730288`. Resubmitted lower-memory layerwise STREAM jobs using `BATCH_SIZE=8` and `GENE_CHUNK_SIZE=256`: 5k FiLM train/eval `18755345`/`18755346`, 5k cross-attention train/eval `18755347`/`18755348`, 10k FiLM smoke/train/eval `18755349`/`18755351`/`18755352`, and 10k cross-attention smoke/train/eval `18755350`/`18755353`/`18755354`.
+
+## 2026-07-10
+
+- Low-memory layerwise STREAM jobs completed successfully. Completed jobs: 5k FiLM train/eval `18755345`/`18755346`, 5k cross-attention train/eval `18755347`/`18755348`, 10k FiLM smoke/train/eval `18755349`/`18755351`/`18755352`, and 10k cross-attention smoke/train/eval `18755350`/`18755353`/`18755354`.
+- Mean held-out full-panel losses: 5k standard CFM 41.6054, 5k FiLM 44.1599, 5k cross-attention 45.4073; 10k standard CFM 21.1570, 10k FiLM 23.6008, 10k cross-attention 20.8592. On mean MAE, standard CFM remained best for 5k and 10k full-panel evaluation.
