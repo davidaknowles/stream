@@ -10,8 +10,10 @@ streaming production run without creating that dense intermediate.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -61,15 +63,29 @@ def measure(
     warmup_batches: int,
     timed_batches: int,
     device: torch.device,
+    precision: str,
+    no_padding_mask: bool,
 ) -> dict[str, float | int]:
     token_ids = torch.randint(4, N_TOKENS, (sequence_length, batch_size), device=device)
     token_ids[0] = 3  # UCE CLS token.
     mask = torch.ones((batch_size, sequence_length), device=device)
 
     def forward() -> None:
-        embedded = model.pe_embedding(token_ids)
-        embedded = nn.functional.normalize(embedded, dim=2)
-        model(embedded, mask=mask)
+        autocast = (
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if precision == "bf16"
+            else contextlib.nullcontext()
+        )
+        with autocast:
+            embedded = model.pe_embedding(token_ids)
+            embedded = nn.functional.normalize(embedded, dim=2)
+            if no_padding_mask:
+                encoded = model.encoder(embedded) * math.sqrt(model.d_model)
+                encoded = model.pos_encoder(encoded)
+                output = model.transformer_encoder(encoded)
+                model.decoder(output)
+            else:
+                model(embedded, mask=mask)
 
     with torch.inference_mode():
         for _ in range(warmup_batches):
@@ -104,7 +120,13 @@ def main() -> None:
         help="Benchmark the published architecture before the checkpoint is available.",
     )
     parser.add_argument("--batch-size", type=int, default=25)
-    parser.add_argument("--sequence-length", type=int, default=1045)
+    parser.add_argument("--sequence-length", type=int, default=1065)
+    parser.add_argument("--precision", choices=["fp32", "bf16"], default="fp32")
+    parser.add_argument(
+        "--no-padding-mask",
+        action="store_true",
+        help="Use only for batches bucketed to one exact unpadded token length.",
+    )
     parser.add_argument("--warmup-batches", type=int, default=3)
     parser.add_argument("--timed-batches", type=int, default=10)
     parser.add_argument("--out", type=Path, required=True)
@@ -124,10 +146,14 @@ def main() -> None:
         warmup_batches=args.warmup_batches,
         timed_batches=args.timed_batches,
         device=device,
+        precision=args.precision,
+        no_padding_mask=args.no_padding_mask,
     )
     result["gpu"] = torch.cuda.get_device_name(device)
     result["atlas_cells"] = ATLAS_CELLS
     result["checkpoint_loaded"] = args.checkpoint is not None
+    result["precision"] = args.precision
+    result["no_padding_mask"] = args.no_padding_mask
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
