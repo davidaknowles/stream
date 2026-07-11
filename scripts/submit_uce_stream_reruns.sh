@@ -14,11 +14,11 @@ for n_hvg in 5000 10000; do
   for variant in standard_cfm film cross_attention; do
     train_name="stream_uce_${n_hvg}_${variant}"
     train_job="$(sbatch --parsable --dependency="afterok:${uce_job}" --job-name="$train_name" \
-      --export="ALL,VARIANT=${variant},OUT_DIR=${out_dir},N_HVG=${n_hvg},CELL_STATE=uce,UCE_EMBEDDING_DIR=outputs/uce/embeddings,BATCH_SIZE=8,GENE_CHUNK_SIZE=256,STREAM_PYTHON=${HOME}/venv/torch/bin/python,WANDB_MODE=online,WANDB_RUN_NAME=${train_name}" \
+      --export="ALL,VARIANT=${variant},OUT_DIR=${out_dir},N_HVG=${n_hvg},CELL_STATE=uce,UCE_EMBEDDING_DIR=outputs/uce/embeddings,BATCH_SIZE=8,GENE_CHUNK_SIZE=256,STREAM_PYTHON=${HOME}/venv/torchfix/bin/python,WANDB_MODE=online,WANDB_RUN_NAME=${train_name}" \
       slurm/run_stream_train.sbatch)"
     eval_name="stream_uce_eval_${n_hvg}_${variant}"
     eval_job="$(sbatch --parsable --dependency="afterok:${train_job}" --job-name="$eval_name" \
-      --export="ALL,VARIANT=${variant},OUT_DIR=${out_dir},N_HVG=${n_hvg},CELL_STATE=uce,UCE_EMBEDDING_DIR=outputs/uce/embeddings,BATCH_SIZE=8,GENE_CHUNK_SIZE=256,STREAM_PYTHON=${HOME}/venv/torch/bin/python,EVAL_GENE_SUBSET=legacy_1984:outputs/stream/selected_genes.csv" \
+      --export="ALL,VARIANT=${variant},OUT_DIR=${out_dir},N_HVG=${n_hvg},CELL_STATE=uce,UCE_EMBEDDING_DIR=outputs/uce/embeddings,BATCH_SIZE=8,GENE_CHUNK_SIZE=256,STREAM_PYTHON=${HOME}/venv/torchfix/bin/python,EVAL_GENE_SUBSET=legacy_1984:outputs/stream/selected_genes.csv" \
       slurm/run_stream_evaluate.sbatch)"
     echo "Submitted ${train_name}: ${train_job}; ${eval_name}: ${eval_job}"
   done
