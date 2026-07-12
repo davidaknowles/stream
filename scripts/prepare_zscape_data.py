@@ -73,7 +73,13 @@ def zepa_excel_to_bed(excel_paths: list[Path], output_path: Path) -> int:
 
     candidates = []
     for excel_path in excel_paths:
-        sheets = pd.read_excel(excel_path, sheet_name=None)
+        try:
+            sheets = pd.read_excel(excel_path, sheet_name=None)
+        except ValueError as exc:
+            if "Sheet name is an empty list" not in str(exc):
+                raise
+            print(f"Skipping ZEPA workbook with no readable worksheets: {excel_path}", flush=True)
+            continue
         for sheet, table in sheets.items():
             try:
                 chrom = _column(table, ("chr", "chrom", "chromosome", "seqnames"))

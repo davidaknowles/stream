@@ -139,6 +139,9 @@ on cached held-out endpoints and deterministically sampled OT pairs.
 bash scripts/submit_zebrafish_transfer.sh
 ```
 
+Use `notebooks/zebrafish_transfer_results.ipynb` after evaluation to compare
+the cached held-out displacement metrics across time scales and model regimes.
+
 
 ## UMAP Strategy
 
