@@ -139,8 +139,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="downloads/zscape")
     parser.add_argument("--shard-cells", type=int, default=100_000)
-    parser.add_argument("--control-target", default="ctrl-uninj")
-    parser.add_argument("--include-injected-controls", action="store_true")
+    parser.add_argument("--control-target", default=None, help="Optional exact control label, such as ctrl-uninj.")
+    parser.add_argument("--control-target-prefix", default="ctrl-", help="Keep labels with this prefix when no exact label is set.")
+    parser.add_argument("--include-noncontrol", action="store_true")
     parser.add_argument("--skip-matrix", action="store_true")
     args = parser.parse_args()
     root = Path(args.out_dir)
@@ -159,8 +160,12 @@ def main() -> None:
     genes = normalize_metadata(raw / "genes.gz", "genes")
     if "temp" in cells.columns:
         cells = cells[cells["temp"].astype(str).eq("28C")].copy()
-    if "gene_target" in cells.columns and not args.include_injected_controls:
-        cells = cells[cells["gene_target"].astype(str).eq(args.control_target)].copy()
+    if "gene_target" in cells.columns and not args.include_noncontrol:
+        targets = cells["gene_target"].astype(str)
+        if args.control_target is not None:
+            cells = cells[targets.eq(args.control_target)].copy()
+        else:
+            cells = cells[targets.str.startswith(args.control_target_prefix)].copy()
     if cells.empty:
         raise ValueError("No cells remain after control filtering")
     cells["matrix_row"] = cells.index.to_numpy()
@@ -168,7 +173,18 @@ def main() -> None:
     genes.to_csv(root / "df_gene.csv", index=True)
     n_cells = 0 if args.skip_matrix else write_h5ad_shards(raw / "matrix.gz", all_cells, cells, genes, root / "adata", args.shard_cells)
     with (root / "preprocessing_manifest.json").open("w") as handle:
-        json.dump({"n_cells": n_cells, "n_genes": len(genes), "n_ccres": n_ccres, "control_target": args.control_target, "include_injected_controls": args.include_injected_controls}, handle, indent=2)
+        json.dump(
+            {
+                "n_cells": n_cells,
+                "n_genes": len(genes),
+                "n_ccres": n_ccres,
+                "control_target": args.control_target,
+                "control_target_prefix": args.control_target_prefix,
+                "include_noncontrol": args.include_noncontrol,
+            },
+            handle,
+            indent=2,
+        )
     print(f"Prepared ZSCAPE at {root}")
 
 

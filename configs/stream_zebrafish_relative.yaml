@@ -22,7 +22,7 @@ alphagenome_batch_size: 8
 alphagenome_organism_index: 1
 
 cell_state: uce
-uce_embedding_dir: outputs/zscape_uce/embeddings
+uce_embedding_dir: outputs/zscape_uce_full_controls/embeddings
 uce_embedding_dim: 1280
 batch_size: 8
 gene_chunk_size: 256

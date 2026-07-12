@@ -118,8 +118,8 @@ Downloaded data, generated outputs, Slurm logs, and local virtual environments a
 ## Zebrafish Transfer Benchmark
 
 The zebrafish benchmark tests whether a mouse-trained UCE-conditioned STREAM
-vector field transfers to wild-type ZSCAPE development. The workflow converts
-ZSCAPE counts to sharded AnnData, caches frozen 33-layer UCE states, and links
+vector field transfers to the full ZSCAPE control reference. The workflow converts
+all `ctrl-*` embryos to sharded AnnData, caches frozen 33-layer UCE states, and links
 ZEPA GRCz11 developmental cCREs within 100 kb of protein-coding HVG TSSs. Each
 gene retains one explicit promoter token.
 
