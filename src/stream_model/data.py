@@ -22,8 +22,19 @@ def parse_day_value(day: str) -> float:
     return value
 
 
+def canonical_day_label(day: str | float | int) -> str:
+    """Preserve named stages while normalizing numeric CSV labels such as ``36.0``."""
+
+    if pd.isna(day):
+        return np.nan
+    label = str(day)
+    if re.fullmatch(r"[0-9]+\.0", label):
+        return label[:-2]
+    return label
+
+
 def ordered_days(days: list[str] | pd.Series | np.ndarray) -> list[str]:
-    return sorted({str(day) for day in days}, key=parse_day_value)
+    return sorted({canonical_day_label(day) for day in days}, key=parse_day_value)
 
 
 def build_time_coordinates(
@@ -88,7 +99,7 @@ class H5adIntervalSampler:
         self.state_embeddings_dir = None if state_embeddings_dir is None else Path(state_embeddings_dir)
         self.state_dim = state_dim
         self._state_cache = {}
-        self.time_coordinates = time_coordinates or {}
+        self.time_coordinates = {canonical_day_label(day): value for day, value in (time_coordinates or {}).items()}
 
     @classmethod
     def from_adata_dir(
@@ -108,7 +119,7 @@ class H5adIntervalSampler:
         rows = []
         gene_indices = None
         adata_paths = sorted(Path(adata_dir).glob("*.h5ad"))
-        cell_days = cell_metadata.set_index("cell_id")["day"]
+        cell_days = cell_metadata.set_index("cell_id")["day"].map(canonical_day_label)
         for file_id, path in enumerate(adata_paths):
             a = ad.read_h5ad(path, backed="r")
             var_gene_ids = pd.Index(a.var["gene_id"] if "gene_id" in a.var else a.var_names)
@@ -122,7 +133,7 @@ class H5adIntervalSampler:
             for row_idx, day in enumerate(days):
                 if pd.isna(day):
                     continue
-                rows.append({"file_id": file_id, "path": str(path), "row_idx": row_idx, "day": str(day)})
+                rows.append({"file_id": file_id, "path": str(path), "row_idx": row_idx, "day": canonical_day_label(day)})
             a.file.close()
         if gene_indices is None:
             raise ValueError(f"No .h5ad files found in {adata_dir}")
@@ -142,6 +153,7 @@ class H5adIntervalSampler:
 
     def sample(self) -> IntervalBatch:
         day0, day1 = self.intervals[self.rng.integers(0, len(self.intervals))]
+        day0, day1 = canonical_day_label(day0), canonical_day_label(day1)
         first = self._sample_day(day0)
         second = self._sample_day(day1)
         if self.state_embeddings_dir is None:
@@ -200,7 +212,14 @@ class H5adIntervalSampler:
             if not state_path.exists():
                 raise FileNotFoundError(f"Missing auxiliary state embeddings: {state_path}")
             state = np.load(state_path, mmap_mode="r")
-            if state.shape[0] != self.manifest.loc[self.manifest["path"] == str(path), "row_idx"].nunique():
+            # The state memmap aligns with all rows in its AnnData shard. The
+            # sampler manifest may exclude cells without usable stage metadata.
+            import anndata as ad
+
+            atlas = ad.read_h5ad(path, backed="r")
+            n_rows = atlas.n_obs
+            atlas.file.close()
+            if state.shape[0] != n_rows:
                 raise ValueError(f"Embedding row count does not match AnnData rows: {state_path}")
             if self.state_dim is not None and state.shape[1] != self.state_dim:
                 raise ValueError(f"Expected state dimension {self.state_dim} in {state_path}, found {state.shape[1]}")

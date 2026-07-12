@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stream_model.data import adjacent_intervals, build_time_coordinates
+from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label
 from stream_model.genome import link_cres_to_genes, parse_gtf_tss
 
 
@@ -59,6 +59,8 @@ def test_time_coordinates_support_physical_days_and_relative_scaling():
     relative = build_time_coordinates(stages, "relative", value_scale=1 / 24)
     assert physical == {"18": 0.75, "36": 1.5, "72": 3.0}
     assert relative == {"18": 0.0, "36": 1 / 3, "72": 1.0}
+    assert canonical_day_label(36.0) == "36"
+    assert canonical_day_label("E9.0") == "E9.0"
 
 
 def test_ot_and_cfm_shapes():

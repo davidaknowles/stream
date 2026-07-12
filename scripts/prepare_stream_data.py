@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.data import adjacent_intervals, build_time_coordinates, load_selected_genes, ordered_days
+from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label, load_selected_genes, ordered_days
 from stream_model.genome import link_cres_to_genes, parse_gtf_tss, read_ccre_bed
 
 
@@ -51,7 +51,7 @@ def main() -> None:
 
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
     days = ordered_days(cells["day"].dropna().astype(str).to_numpy())
-    heldout = set(str(day) for day in cfg.heldout_days)
+    heldout = {canonical_day_label(day) for day in cfg.heldout_days}
     time_coordinates = build_time_coordinates(days, cfg.time_coordinate, cfg.time_value_scale)
     split = {
         "all_days": days,
