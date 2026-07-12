@@ -10,12 +10,37 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from jax_adata_streaming import _chunk_looks_like_counts, _maybe_normalize
 from stream_model.config import StreamConfig
 
 
 def _gene_ids(adata) -> pd.Index:
     return pd.Index(adata.var["gene_id"] if "gene_id" in adata.var else adata.var_names).astype(str)
+
+
+def _chunk_looks_like_counts(x) -> bool:
+    values = x.data if sparse.issparse(x) else np.asarray(x).ravel()
+    values = values[: min(100_000, values.shape[0])]
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return False
+    rounded = np.round(values[: min(10_000, values.size)])
+    return np.nanmax(values) > 50 and np.allclose(values[: rounded.size], rounded)
+
+
+def _maybe_normalize(x, do_normalize: bool):
+    if not do_normalize:
+        return x.astype(np.float32) if sparse.issparse(x) else np.asarray(x, dtype=np.float32)
+    if sparse.issparse(x):
+        x = x.astype(np.float32).tocsr(copy=True)
+        totals = np.asarray(x.sum(axis=1)).ravel().astype(np.float32)
+        scale = np.divide(1e4, totals, out=np.zeros_like(totals), where=totals > 0)
+        x = x.multiply(scale[:, None]).tocsr()
+        x.data = np.log1p(x.data)
+        return x
+    x = np.asarray(x, dtype=np.float32)
+    totals = x.sum(axis=1).astype(np.float32)
+    scale = np.divide(1e4, totals, out=np.zeros_like(totals), where=totals > 0)
+    return np.log1p(x * scale[:, None])
 
 
 def main() -> None:
