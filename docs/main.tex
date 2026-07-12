@@ -135,12 +135,11 @@ are linked to the gene, with at most 32 packed tokens and exactly one promoter
 token. The 33-layer UCE encoder is frozen and uses zebrafish gene-token
 metadata; OT, targets, and outputs remain in expression space.
 
-For each 5k and 10k panel, FiLM and cross-attention STREAM are evaluated as
-(i) a frozen mouse checkpoint applied zero-shot to zebrafish, (ii) the same
-checkpoint fine-tuned on zebrafish, and (iii) a zebrafish-only initialization.
-Standard CFM is trained from scratch on zebrafish using the same genes and
-minibatch OT protocol. We hold out 36 and 72 hpf rather than embryos and score
-only intervals touching those stages.
+The active benchmark uses the best mouse configuration: a 10k-gene,
+UCE-conditioned cross-attention STREAM field. We evaluate (i) a frozen mouse
+checkpoint applied zero-shot to zebrafish, (ii) the same checkpoint fine-tuned
+on zebrafish, and (iii) a zebrafish-only initialization. We hold out 36 and
+72 hpf rather than embryos and score only intervals touching those stages.
 
 We compare physical time, $t=\mathrm{hpf}/24$, with organism-relative time,
 where each species' observed development is mapped to $[0,1]$. Separate mouse

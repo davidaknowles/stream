@@ -7,6 +7,7 @@
 - Added source-checkpoint initialization, labeled artifacts, deterministic shared endpoint caches, and held-out expression-displacement MSE/MAE. This displacement metric is used across time scales because native velocity targets change with the coordinate transform.
 - Added dependency submission for 5k/10k FiLM, cross-attention, and standard-CFM zebrafish comparisons under relative-time and physical-day conditions. Zero-shot uses the matching mouse source checkpoint, fine-tuning updates the STREAM field only, and UCE/AlphaGenome remain frozen.
 - ZSCAPE conversion retained 630,179 uninjected 28C control cells in seven AnnData shards and produced 959,040 primary ZEPA cCREs. The dynamic workbook has no readable sheets and is skipped. Made streaming HVG selection independent of the Scanpy-heavy EDA module so it runs in the UCE training environment.
+- Reduced the active zebrafish experiment to the best mouse architecture: 10k genes, frozen UCE cell state, and cross-attention STREAM. The retained comparisons are zero-shot transfer, fine-tuning, and zebrafish-only training under both physical-day and relative-time coordinates; 5k, FiLM, and standard-CFM jobs were cancelled.
 
 ## 2026-07-06
 

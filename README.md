@@ -123,12 +123,11 @@ ZSCAPE counts to sharded AnnData, caches frozen 33-layer UCE states, and links
 ZEPA GRCz11 developmental cCREs within 100 kb of protein-coding HVG TSSs. Each
 gene retains one explicit promoter token.
 
-It holds out 36 and 72 hpf and compares frozen zero-shot mouse transfer,
-fine-tuning of the transferred STREAM field, and zebrafish-only training. The
-standard CFM baseline is zebrafish-only because its panel-sized output head is
-not transferable. FiLM and cross-attention condition every transformer layer
-on frozen UCE state; AlphaGenome embeddings of GRCz11 sequence use the mouse
-organism index as an explicit out-of-distribution assumption.
+The active benchmark uses the best mouse configuration: 10k genes, frozen UCE
+state, and cross-attention STREAM. It holds out 36 and 72 hpf and compares
+frozen zero-shot mouse transfer, fine-tuning of the transferred field, and
+zebrafish-only training. AlphaGenome embeddings of GRCz11 sequence use the
+mouse organism index as an explicit out-of-distribution assumption.
 
 Both organism-relative `[0, 1]` time and physical days (`hpf / 24`) are
 evaluated. Native velocity metrics are only compared within a coordinate

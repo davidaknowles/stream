@@ -4,6 +4,7 @@ numpy
 openpyxl
 pandas
 plotnine
+pyfastx
 pysam
 pyyaml
 safetensors
