@@ -122,4 +122,35 @@ STREAM is compared against a standard expression-only CFM baseline. The baseline
 
 Evaluation is performed on held-out time points. Whole embryonic days are removed from training intervals. Training uses only adjacent intervals whose two endpoints are both training time points. Evaluation reports held-out-timepoint losses and rollout diagnostics on intervals adjacent to or involving held-out days when those endpoints are available. This directly tests temporal generalization rather than embryo-level generalization.
 
+\section{Cross-species zebrafish transfer}
+
+We evaluate whether the UCE-conditioned STREAM field learned from mouse
+development transfers to zebrafish development. The target data are the
+wild-type ZSCAPE reference atlas (GEO GSE202639), restricted to uninjected
+28C controls. We use the GRCz11 Ensembl reference and the ZEPA developmental
+single-cell chromatin accessibility atlas to construct a union of candidate
+cis-regulatory elements. Elements within 100 kb of a protein-coding HVG TSS
+are linked to the gene, with at most 32 packed tokens and exactly one promoter
+token. The 33-layer UCE encoder is frozen and uses zebrafish gene-token
+metadata; OT, targets, and outputs remain in expression space.
+
+For each 5k and 10k panel, FiLM and cross-attention STREAM are evaluated as
+(i) a frozen mouse checkpoint applied zero-shot to zebrafish, (ii) the same
+checkpoint fine-tuned on zebrafish, and (iii) a zebrafish-only initialization.
+Standard CFM is trained from scratch on zebrafish using the same genes and
+minibatch OT protocol. We hold out 36 and 72 hpf rather than embryos and score
+only intervals touching those stages.
+
+We compare physical time, $t=\mathrm{hpf}/24$, with organism-relative time,
+where each species' observed development is mapped to $[0,1]$. Separate mouse
+source models are trained for each convention. Native CFM loss is reported
+within a time convention; a scale-aware expression-displacement metric,
+$\lvert (f_\theta-\hat f)(t_{k+1}-t_k) \rvert$, is compared across them.
+Held-out endpoints are cached and OT sampling is seeded for every variant.
+
+The published AlphaGenome model exposes only human and mouse organism
+conditioning. GRCz11 sequence windows therefore use its mouse organism index,
+which is an explicit out-of-distribution assumption rather than zebrafish
+calibration.
+
 \end{document}

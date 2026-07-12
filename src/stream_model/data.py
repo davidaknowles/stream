@@ -26,6 +26,27 @@ def ordered_days(days: list[str] | pd.Series | np.ndarray) -> list[str]:
     return sorted({str(day) for day in days}, key=parse_day_value)
 
 
+def build_time_coordinates(
+    days: list[str] | pd.Series | np.ndarray,
+    coordinate: str = "physical_days",
+    value_scale: float = 1.0,
+) -> dict[str, float]:
+    """Map ordered labels to physical-day or organism-relative time coordinates."""
+
+    ordered = ordered_days(days)
+    raw = np.asarray([parse_day_value(day) * value_scale for day in ordered], dtype=np.float64)
+    if coordinate == "physical_days":
+        values = raw
+    elif coordinate == "relative":
+        span = raw[-1] - raw[0]
+        if span <= 0:
+            raise ValueError("Relative time requires at least two distinct stages")
+        values = (raw - raw[0]) / span
+    else:
+        raise ValueError("time_coordinate must be physical_days or relative")
+    return {day: float(value) for day, value in zip(ordered, values, strict=True)}
+
+
 def adjacent_intervals(days: list[str], heldout_days: set[str] | None = None) -> list[tuple[str, str]]:
     heldout_days = heldout_days or set()
     ordered = ordered_days(days)
@@ -56,6 +77,7 @@ class H5adIntervalSampler:
         seed: int = 1337,
         state_embeddings_dir: str | Path | None = None,
         state_dim: int | None = None,
+        time_coordinates: dict[str, float] | None = None,
     ):
         self.manifest = manifest
         self.gene_indices = np.asarray(gene_indices)
@@ -66,6 +88,7 @@ class H5adIntervalSampler:
         self.state_embeddings_dir = None if state_embeddings_dir is None else Path(state_embeddings_dir)
         self.state_dim = state_dim
         self._state_cache = {}
+        self.time_coordinates = time_coordinates or {}
 
     @classmethod
     def from_adata_dir(
@@ -78,6 +101,7 @@ class H5adIntervalSampler:
         seed: int = 1337,
         state_embeddings_dir: str | Path | None = None,
         state_dim: int | None = None,
+        time_coordinates: dict[str, float] | None = None,
     ) -> "H5adIntervalSampler":
         import anndata as ad
 
@@ -110,6 +134,7 @@ class H5adIntervalSampler:
             seed,
             state_embeddings_dir=state_embeddings_dir,
             state_dim=state_dim,
+            time_coordinates=time_coordinates,
         )
         if sampler.state_embeddings_dir is not None:
             sampler._validate_state_files(adata_paths)
@@ -128,8 +153,8 @@ class H5adIntervalSampler:
         return IntervalBatch(
             x0=x0,
             x1=x1,
-            t0=parse_day_value(day0),
-            t1=parse_day_value(day1),
+            t0=float(self.time_coordinates.get(day0, parse_day_value(day0))),
+            t1=float(self.time_coordinates.get(day1, parse_day_value(day1))),
             day0=day0,
             day1=day1,
             state0=state0,
@@ -187,15 +212,26 @@ class H5adIntervalSampler:
 
 
 def load_selected_genes(gene_metadata_csv: str | Path, hvg_csv: str | Path, n_hvg: int) -> pd.DataFrame:
-    genes = pd.read_csv(gene_metadata_csv, index_col=0)
+    genes = pd.read_csv(gene_metadata_csv)
+    if "gene_id" not in genes.columns:
+        if "id" in genes.columns:
+            genes = genes.rename(columns={"id": "gene_id"})
+        else:
+            genes = genes.rename(columns={genes.columns[0]: "gene_id"})
+    if "gene_short_name" not in genes.columns:
+        for candidate in ("gene_name", "symbol", "name"):
+            if candidate in genes.columns:
+                genes = genes.rename(columns={candidate: "gene_short_name"})
+                break
+    if "gene_short_name" not in genes.columns:
+        genes["gene_short_name"] = genes["gene_id"]
+    if "gene_type" not in genes.columns:
+        genes["gene_type"] = "unknown"
+    if "chr" not in genes.columns:
+        genes["chr"] = genes.get("chromosome", "")
     hvgs = pd.read_csv(hvg_csv)
     if "variance" in hvgs.columns:
         hvgs = hvgs.sort_values("variance", ascending=False)
     selected = hvgs.merge(genes, left_on="gene", right_on="gene_id", how="inner")
-    selected = selected[selected["gene_type"] == "protein_coding"].drop_duplicates("gene_id").head(n_hvg)
-    if len(selected) < n_hvg and len(hvgs) > n_hvg:
-        raise ValueError(
-            f"Only found {len(selected):,} protein-coding HVGs in {hvg_csv}; "
-            f"need {n_hvg:,}. Regenerate the HVG table with more genes."
-        )
+    selected = selected.drop_duplicates("gene_id").head(n_hvg)
     return selected[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].reset_index(drop=True)

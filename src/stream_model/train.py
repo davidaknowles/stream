@@ -52,7 +52,8 @@ def artifact_stem(config, variant: str | None = None) -> str:
     """Return a model/metric stem that keeps alternate cell states separate."""
 
     variant = variant or config.model_variant
-    return variant if config.cell_state == "expression" else f"{variant}_{config.cell_state}"
+    stem = variant if config.cell_state == "expression" else f"{variant}_{config.cell_state}"
+    return f"{stem}_{config.experiment_label}" if getattr(config, "experiment_label", "") else stem
 
 
 def predict_stream_chunked(

@@ -1,0 +1,52 @@
+project_root: /gpfs/commons/home/daknowles/projects/stream
+adata_dir: downloads/zscape/adata
+cell_metadata_csv: downloads/zscape/df_cell.csv
+gene_metadata_csv: downloads/zscape/df_gene.csv
+hvg_csv: outputs/zscape/streaming_gene_variances.csv
+ccre_bed: downloads/zscape/zepa_ccres_grcz11.bed.gz
+gtf: downloads/zscape/references/Danio_rerio.GRCz11.113.gtf.gz
+fasta: downloads/zscape/references/Danio_rerio.GRCz11.dna.primary_assembly.fa.gz
+out_dir: outputs/zscape_stream_hvg10000_relative
+
+gene_set: protein_coding_hvg
+n_hvg: 10000
+cre_window_bp: 100000
+promoter_window_bp: 1000
+synthetic_promoter_bp: 512
+max_cres_per_gene: 32
+
+alphagenome_repo: /gpfs/commons/home/daknowles/projects/alphagenome-pytorch
+alphagenome_checkpoint: /gpfs/commons/home/daknowles/projects/mpragent/outputs/models/alphagenome/model_all_folds.safetensors
+alphagenome_sequence_bp: 131072
+alphagenome_batch_size: 8
+alphagenome_organism_index: 1
+
+cell_state: uce
+uce_embedding_dir: outputs/zscape_uce/embeddings
+uce_embedding_dim: 1280
+batch_size: 8
+gene_chunk_size: 256
+ot_epsilon: 0.05
+ot_iterations: 80
+learning_rate: 0.0001
+epochs: 10
+heldout_days: ["36", "72"]
+dataset_name: zebrafish_zscape
+time_coordinate: relative
+time_value_scale: 0.041666666666666664
+
+model_variant: film
+d_model: 256
+n_heads: 8
+n_layers: 4
+n_context_tokens: 8
+dropout: 0.1
+positional_encoding: rope
+seed: 1337
+device: cuda
+
+use_wandb: true
+wandb_project: stream
+wandb_entity:
+wandb_mode: online
+wandb_run_name:

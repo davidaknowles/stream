@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stream_model.data import adjacent_intervals
+from stream_model.data import adjacent_intervals, build_time_coordinates
 from stream_model.genome import link_cres_to_genes, parse_gtf_tss
 
 
@@ -51,6 +51,14 @@ def test_link_cres_adds_synthetic_promoter_when_closest_is_far():
 def test_adjacent_intervals_excludes_heldout_days():
     days = ["E8.5", "E9.0", "E9.5", "E10.0"]
     assert adjacent_intervals(days, {"E9.5"}) == [("E8.5", "E9.0")]
+
+
+def test_time_coordinates_support_physical_days_and_relative_scaling():
+    stages = ["18", "36", "72"]
+    physical = build_time_coordinates(stages, "physical_days", value_scale=1 / 24)
+    relative = build_time_coordinates(stages, "relative", value_scale=1 / 24)
+    assert physical == {"18": 0.75, "36": 1.5, "72": 3.0}
+    assert relative == {"18": 0.0, "36": 1 / 3, "72": 1.0}
 
 
 def test_ot_and_cfm_shapes():
@@ -239,6 +247,7 @@ def test_evaluate_intervals_reports_full_and_subset_gene_sets():
         ("legacy", 2),
     }
     assert len(metrics) == 4
+    assert {"displacement_mse", "displacement_mae"}.issubset(metrics.columns)
 
 
 def test_evaluate_intervals_uses_auxiliary_state_with_expression_target():

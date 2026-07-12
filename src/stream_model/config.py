@@ -1,4 +1,4 @@
-"""Configuration helpers for STREAM mouse development experiments."""
+"""Configuration helpers for STREAM developmental experiments."""
 
 from __future__ import annotations
 
@@ -43,6 +43,10 @@ class StreamConfig:
     learning_rate: float = 1e-4
     epochs: int = 10
     heldout_days: list[str] = field(default_factory=lambda: ["E9.5", "E10.5"])
+    dataset_name: str = "mouse_dev"
+    time_coordinate: str = "physical_days"
+    time_value_scale: float = 1.0
+    experiment_label: str = ""
 
     model_variant: str = "film"
     d_model: int = 256
@@ -114,6 +118,7 @@ def apply_config_overrides(
     cell_state: str | None = None,
     uce_embedding_dir: str | Path | None = None,
     wandb_mode: str | None = None,
+    experiment_label: str | None = None,
 ) -> StreamConfig:
     """Apply common CLI overrides after loading a YAML config."""
 
@@ -133,4 +138,6 @@ def apply_config_overrides(
         cfg.uce_embedding_dir = cfg.resolve_path(uce_embedding_dir)
     if wandb_mode is not None:
         cfg.wandb_mode = wandb_mode
+    if experiment_label is not None:
+        cfg.experiment_label = experiment_label
     return cfg

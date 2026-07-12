@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.data import adjacent_intervals, load_selected_genes, ordered_days
+from stream_model.data import adjacent_intervals, build_time_coordinates, load_selected_genes, ordered_days
 from stream_model.genome import link_cres_to_genes, parse_gtf_tss, read_ccre_bed
 
 
@@ -29,12 +29,12 @@ def main() -> None:
     selected_raw = load_selected_genes(cfg.gene_metadata_csv, cfg.hvg_csv, cfg.n_hvg + 1000)
 
     tss = parse_gtf_tss(cfg.gtf, gene_ids=selected_raw["gene_id"], gene_type="protein_coding")
-    tss = selected_raw[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].merge(
+    tss = selected_raw[["gene_id", "gene_short_name", "variance"]].merge(
         tss, on="gene_id", how="inner", suffixes=("", "_gtf")
     )
     tss = tss.sort_values("variance", ascending=False).head(cfg.n_hvg).copy()
     tss["gene_name"] = tss["gene_short_name"].fillna(tss["gene_name"])
-    selected = tss[["gene_id", "gene_short_name", "gene_type", "chr", "variance"]].copy()
+    selected = tss[["gene_id", "gene_short_name", "gene_type", "chrom", "variance"]].rename(columns={"chrom": "chr"})
     selected.to_csv(cfg.out_dir / "selected_genes.csv", index=False)
     tss.to_csv(cfg.out_dir / "gene_tss.csv", index=False)
 
@@ -52,6 +52,7 @@ def main() -> None:
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
     days = ordered_days(cells["day"].dropna().astype(str).to_numpy())
     heldout = set(str(day) for day in cfg.heldout_days)
+    time_coordinates = build_time_coordinates(days, cfg.time_coordinate, cfg.time_value_scale)
     split = {
         "all_days": days,
         "heldout_days": sorted(heldout, key=lambda x: days.index(x) if x in days else len(days)),
@@ -59,6 +60,9 @@ def main() -> None:
         "heldout_touching_intervals": [
             (a, b) for a, b in zip(days[:-1], days[1:], strict=True) if a in heldout or b in heldout
         ],
+        "time_coordinate": cfg.time_coordinate,
+        "time_value_scale": cfg.time_value_scale,
+        "time_coordinates": time_coordinates,
     }
     with (cfg.out_dir / "timepoint_split.json").open("w") as handle:
         json.dump(split, handle, indent=2)

@@ -53,6 +53,9 @@ def main() -> None:
     parser.add_argument("--gene-chunk-size", type=int, default=None)
     parser.add_argument("--cell-state", choices=["expression", "uce"], default=None)
     parser.add_argument("--uce-embedding-dir", default=None)
+    parser.add_argument("--experiment-label", default=None)
+    parser.add_argument("--checkpoint", default=None, help="Checkpoint to evaluate instead of the local artifact path.")
+    parser.add_argument("--eval-cache", default=None, help="Reusable compressed endpoint cache for deterministic comparisons.")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -64,6 +67,7 @@ def main() -> None:
         out_dir=args.out_dir,
         cell_state=args.cell_state,
         uce_embedding_dir=args.uce_embedding_dir,
+        experiment_label=args.experiment_label,
     )
     cfg.model_variant = args.variant
     if args.batch_size is not None:
@@ -86,6 +90,7 @@ def main() -> None:
         seed=cfg.seed + 1,
         state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" else None,
         state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
+        time_coordinates=split.get("time_coordinates"),
     )
 
     cre_inputs = None
@@ -95,7 +100,8 @@ def main() -> None:
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
     stem = artifact_stem(cfg)
-    ckpt = torch.load(cfg.out_dir / f"model_{stem}.pt", map_location=device)
+    checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{stem}.pt"
+    ckpt = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(ckpt["model"])
     eval_gene_sets = _load_eval_gene_sets(gene_ids, args.eval_gene_subset, cfg)
     metrics = evaluate_intervals(
@@ -105,6 +111,7 @@ def main() -> None:
         cre_inputs=cre_inputs,
         n_batches=args.batches,
         eval_gene_sets=eval_gene_sets,
+        batch_cache=cfg.resolve_path(args.eval_cache) if args.eval_cache else None,
     )
     out = cfg.out_dir / f"eval_metrics_{stem}.csv"
     metrics.to_csv(out, index=False)

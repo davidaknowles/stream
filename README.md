@@ -115,6 +115,30 @@ Workflow code for EDA and STREAM modeling of the JAX AnnData files from the Shen
 
 Downloaded data, generated outputs, Slurm logs, and local virtual environments are intentionally not tracked by Git.
 
+## Zebrafish Transfer Benchmark
+
+The zebrafish benchmark tests whether a mouse-trained UCE-conditioned STREAM
+vector field transfers to wild-type ZSCAPE development. The workflow converts
+ZSCAPE counts to sharded AnnData, caches frozen 33-layer UCE states, and links
+ZEPA GRCz11 developmental cCREs within 100 kb of protein-coding HVG TSSs. Each
+gene retains one explicit promoter token.
+
+It holds out 36 and 72 hpf and compares frozen zero-shot mouse transfer,
+fine-tuning of the transferred STREAM field, and zebrafish-only training. The
+standard CFM baseline is zebrafish-only because its panel-sized output head is
+not transferable. FiLM and cross-attention condition every transformer layer
+on frozen UCE state; AlphaGenome embeddings of GRCz11 sequence use the mouse
+organism index as an explicit out-of-distribution assumption.
+
+Both organism-relative `[0, 1]` time and physical days (`hpf / 24`) are
+evaluated. Native velocity metrics are only compared within a coordinate
+regime. The common metric is expression displacement, `velocity * interval_dt`,
+on cached held-out endpoints and deterministically sampled OT pairs.
+
+```bash
+bash scripts/submit_zebrafish_transfer.sh
+```
+
 
 ## UMAP Strategy
 

@@ -1,6 +1,7 @@
 anndata
 h5py
 numpy
+openpyxl
 pandas
 plotnine
 pysam

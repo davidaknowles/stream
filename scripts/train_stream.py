@@ -27,6 +27,8 @@ def main() -> None:
     parser.add_argument("--cell-state", choices=["expression", "uce"], default=None)
     parser.add_argument("--uce-embedding-dir", default=None)
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default=None)
+    parser.add_argument("--experiment-label", default=None)
+    parser.add_argument("--init-checkpoint", default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -41,6 +43,7 @@ def main() -> None:
         cell_state=args.cell_state,
         uce_embedding_dir=args.uce_embedding_dir,
         wandb_mode=args.wandb_mode,
+        experiment_label=args.experiment_label,
     )
     if args.variant is not None:
         cfg.model_variant = args.variant
@@ -65,6 +68,7 @@ def main() -> None:
         seed=cfg.seed,
         state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" else None,
         state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
+        time_coordinates=split.get("time_coordinates"),
     )
 
     cre_inputs = None
@@ -73,6 +77,9 @@ def main() -> None:
         cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
+    if args.init_checkpoint is not None:
+        checkpoint = torch.load(cfg.resolve_path(args.init_checkpoint), map_location=device)
+        model.load_state_dict(checkpoint["model"], strict=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     wandb_run = None
     if cfg.use_wandb:
@@ -85,7 +92,7 @@ def main() -> None:
             mode=cfg.wandb_mode,
             name=run_name,
             config=cfg.to_dict(),
-            tags=["stream", cfg.model_variant, cfg.cell_state, "mouse_dev"],
+            tags=["stream", cfg.model_variant, cfg.cell_state, cfg.dataset_name, cfg.time_coordinate],
         )
     metrics = train_steps(
         cfg,

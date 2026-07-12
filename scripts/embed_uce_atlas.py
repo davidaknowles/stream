@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Stream 33-layer UCE embeddings for each JAX atlas AnnData file."""
+"""Stream 33-layer UCE embeddings for each AnnData atlas shard."""
 
 from __future__ import annotations
 
@@ -43,9 +43,10 @@ def embed_file(args, model, path: Path, device: torch.device) -> dict[str, objec
     atlas = ad.read_h5ad(path, backed="r")
     metadata = load_uce_gene_metadata(
         atlas.var,
-        args.mouse_protein_embeddings,
+        args.protein_embeddings,
         args.species_chrom,
         args.species_offsets,
+        species=args.species,
         gene_symbol_column=args.gene_symbol_column,
     )
     n_cells = atlas.n_obs
@@ -92,10 +93,11 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--uce-dir", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--mouse-protein-embeddings", type=Path, required=True)
+    parser.add_argument("--protein-embeddings", type=Path, required=True)
     parser.add_argument("--species-chrom", type=Path, required=True)
     parser.add_argument("--species-offsets", type=Path, required=True)
     parser.add_argument("--gene-symbol-column", default="gene_short_name")
+    parser.add_argument("--species", default="mouse")
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--row-chunk-size", type=int, default=4096)
     parser.add_argument("--sample-size", type=int, default=1024)

@@ -22,6 +22,8 @@ GENE_CHUNK_SIZE="${GENE_CHUNK_SIZE:-}"
 CELL_STATE="${CELL_STATE:-}"
 UCE_EMBEDDING_DIR="${UCE_EMBEDDING_DIR:-}"
 WANDB_MODE="${WANDB_MODE:-}"
+EXPERIMENT_LABEL="${EXPERIMENT_LABEL:-}"
+INIT_CHECKPOINT="${INIT_CHECKPOINT:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -48,4 +50,6 @@ if [[ -n "$GENE_CHUNK_SIZE" ]]; then args+=(--gene-chunk-size "$GENE_CHUNK_SIZE"
 if [[ -n "$CELL_STATE" ]]; then args+=(--cell-state "$CELL_STATE"); fi
 if [[ -n "$UCE_EMBEDDING_DIR" ]]; then args+=(--uce-embedding-dir "$UCE_EMBEDDING_DIR"); fi
 if [[ -n "$WANDB_MODE" ]]; then args+=(--wandb-mode "$WANDB_MODE"); fi
+if [[ -n "$EXPERIMENT_LABEL" ]]; then args+=(--experiment-label "$EXPERIMENT_LABEL"); fi
+if [[ -n "$INIT_CHECKPOINT" ]]; then args+=(--init-checkpoint "$INIT_CHECKPOINT"); fi
 "$STREAM_PYTHON" scripts/train_stream.py "${args[@]}"

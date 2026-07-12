@@ -14,6 +14,9 @@ UCE_PYTHON="${UCE_PYTHON:-$HOME/venv/torch/bin/python}"
 UCE_DIR="${UCE_DIR:-$PROJECT_ROOT/outputs/uce/vendor/UCE}"
 ASSETS_DIR="${ASSETS_DIR:-$PROJECT_ROOT/outputs/uce/assets}"
 OUT_DIR="${OUT_DIR:-$PROJECT_ROOT/outputs/uce/embeddings}"
+ADATA_DIR="${ADATA_DIR:-downloads/adata}"
+SPECIES="${SPECIES:-mouse}"
+PROTEIN_EMBEDDINGS="${PROTEIN_EMBEDDINGS:-}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
 ROW_CHUNK_SIZE="${ROW_CHUNK_SIZE:-4096}"
 
@@ -34,23 +37,31 @@ fi
 if [[ ! -s "$species_chrom" ]]; then curl -L --fail --retry 5 -o "$species_chrom" https://ndownloader.figshare.com/files/42706558; fi
 if [[ ! -s "$species_offsets" ]]; then curl -L --fail --retry 5 -o "$species_offsets" https://ndownloader.figshare.com/files/42706555; fi
 if [[ ! -s "$protein_tar" ]]; then curl -L --fail --retry 5 -o "$protein_tar" https://ndownloader.figshare.com/files/42715213; fi
-mouse_protein="$(find "$ASSETS_DIR" -name 'Mus_musculus.GRCm39.gene_symbol_to_embedding_ESM2.pt' -print -quit)"
-if [[ -z "$mouse_protein" ]]; then
-  tar -xzf "$protein_tar" -C "$ASSETS_DIR"
-  mouse_protein="$(find "$ASSETS_DIR" -name 'Mus_musculus.GRCm39.gene_symbol_to_embedding_ESM2.pt' -print -quit)"
+if [[ -z "$PROTEIN_EMBEDDINGS" ]]; then
+  case "$SPECIES" in
+    mouse) protein_name='Mus_musculus.GRCm39.gene_symbol_to_embedding_ESM2.pt' ;;
+    zebrafish) protein_name='Danio_rerio.GRCz11.gene_symbol_to_embedding_ESM2.pt' ;;
+    *) echo "No default UCE protein embedding configured for species $SPECIES" >&2; exit 1 ;;
+  esac
+  PROTEIN_EMBEDDINGS="$(find "$ASSETS_DIR" -name "$protein_name" -print -quit)"
 fi
-if [[ -z "$mouse_protein" ]]; then
-  echo 'Mouse UCE protein embeddings were not found after extraction.' >&2
+if [[ -z "$PROTEIN_EMBEDDINGS" ]]; then
+  tar -xzf "$protein_tar" -C "$ASSETS_DIR"
+  PROTEIN_EMBEDDINGS="$(find "$ASSETS_DIR" -name "$protein_name" -print -quit)"
+fi
+if [[ -z "$PROTEIN_EMBEDDINGS" ]]; then
+  echo "UCE protein embeddings were not found for species $SPECIES." >&2
   exit 1
 fi
 export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
 "$UCE_PYTHON" scripts/embed_uce_atlas.py \
-  --adata-dir downloads/adata \
+  --adata-dir "$ADATA_DIR" \
   --output-dir "$OUT_DIR" \
   --uce-dir "$UCE_DIR" \
   --checkpoint "$checkpoint" \
-  --mouse-protein-embeddings "$mouse_protein" \
+  --protein-embeddings "$PROTEIN_EMBEDDINGS" \
   --species-chrom "$species_chrom" \
   --species-offsets "$species_offsets" \
+  --species "$SPECIES" \
   --batch-size "$BATCH_SIZE" \
   --row-chunk-size "$ROW_CHUNK_SIZE"

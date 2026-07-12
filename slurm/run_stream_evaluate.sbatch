@@ -21,6 +21,9 @@ BATCH_SIZE="${BATCH_SIZE:-}"
 GENE_CHUNK_SIZE="${GENE_CHUNK_SIZE:-}"
 CELL_STATE="${CELL_STATE:-}"
 UCE_EMBEDDING_DIR="${UCE_EMBEDDING_DIR:-}"
+EXPERIMENT_LABEL="${EXPERIMENT_LABEL:-}"
+CHECKPOINT="${CHECKPOINT:-}"
+EVAL_CACHE="${EVAL_CACHE:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -41,4 +44,7 @@ if [[ -n "$BATCH_SIZE" ]]; then args+=(--batch-size "$BATCH_SIZE"); fi
 if [[ -n "$GENE_CHUNK_SIZE" ]]; then args+=(--gene-chunk-size "$GENE_CHUNK_SIZE"); fi
 if [[ -n "$CELL_STATE" ]]; then args+=(--cell-state "$CELL_STATE"); fi
 if [[ -n "$UCE_EMBEDDING_DIR" ]]; then args+=(--uce-embedding-dir "$UCE_EMBEDDING_DIR"); fi
+if [[ -n "$EXPERIMENT_LABEL" ]]; then args+=(--experiment-label "$EXPERIMENT_LABEL"); fi
+if [[ -n "$CHECKPOINT" ]]; then args+=(--checkpoint "$CHECKPOINT"); fi
+if [[ -n "$EVAL_CACHE" ]]; then args+=(--eval-cache "$EVAL_CACHE"); fi
 "$STREAM_PYTHON" scripts/evaluate_stream.py "${args[@]}"
