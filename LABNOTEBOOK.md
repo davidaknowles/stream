@@ -2,7 +2,7 @@
 
 ## 2026-07-12
 
-- Added the ZSCAPE zebrafish transfer workflow. It downloads public reference counts and metadata, GRCz11 genome/annotation, and ZEPA developmental cCRE workbooks; writes filtered control AnnData shards; caches zebrafish UCE embeddings; and links the union cCRE set to protein-coding HVGs with explicit promoter tokens.
+- Added the ZSCAPE zebrafish transfer workflow. It downloads public reference counts and metadata, GRCz11 genome/annotation, and ZEPA developmental cCRE workbooks; writes filtered control AnnData shards; caches zebrafish UCE embeddings; and links the primary cCRE catalogue to protein-coding HVGs with explicit promoter tokens. The dynamic supplement is included only when it exposes readable coordinate worksheets.
 - Generalized STREAM time handling from implicit mouse day parsing to persisted physical-day or relative `[0,1]` coordinates. The same coordinate contract is used by training and held-out evaluation.
 - Added source-checkpoint initialization, labeled artifacts, deterministic shared endpoint caches, and held-out expression-displacement MSE/MAE. This displacement metric is used across time scales because native velocity targets change with the coordinate transform.
 - Added dependency submission for 5k/10k FiLM, cross-attention, and standard-CFM zebrafish comparisons under relative-time and physical-day conditions. Zero-shot uses the matching mouse source checkpoint, fine-tuning updates the STREAM field only, and UCE/AlphaGenome remain frozen.

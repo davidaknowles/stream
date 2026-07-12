@@ -128,8 +128,9 @@ We evaluate whether the UCE-conditioned STREAM field learned from mouse
 development transfers to zebrafish development. The target data are the
 wild-type ZSCAPE reference atlas (GEO GSE202639), restricted to uninjected
 28C controls. We use the GRCz11 Ensembl reference and the ZEPA developmental
-single-cell chromatin accessibility atlas to construct a union of candidate
-cis-regulatory elements. Elements within 100 kb of a protein-coding HVG TSS
+single-cell chromatin accessibility cCRE catalogue. The optional dynamic-cCRE
+supplement is included when its workbook exposes readable genomic coordinates.
+Elements within 100 kb of a protein-coding HVG TSS
 are linked to the gene, with at most 32 packed tokens and exactly one promoter
 token. The 33-layer UCE encoder is frozen and uses zebrafish gene-token
 metadata; OT, targets, and outputs remain in expression space.
