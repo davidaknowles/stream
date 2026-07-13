@@ -10,7 +10,7 @@ import pandas as pd
 
 from stream_model.alphagenome_embed import embed_cre_table
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.genome import build_token_arrays
+from stream_model.genome import build_token_arrays_from_matrix
 
 
 def main() -> None:
@@ -27,7 +27,7 @@ def main() -> None:
         raise SystemExit("Set alphagenome_checkpoint in the config before embedding CREs.")
     links_path = cfg.out_dir / "cre_gene_links.csv"
     links = pd.read_csv(links_path)
-    embeddings = embed_cre_table(
+    ccre_ids, embeddings = embed_cre_table(
         links,
         fasta_path=cfg.fasta,
         checkpoint=cfg.alphagenome_checkpoint,
@@ -36,11 +36,11 @@ def main() -> None:
         sequence_bp=cfg.alphagenome_sequence_bp,
         device=args.device or cfg.device,
         organism_index=cfg.alphagenome_organism_index,
+        cache_dir=cfg.out_dir,
     )
-    embeddings.to_csv(cfg.out_dir / "cre_embeddings.csv.gz", index=False)
-    arrays = build_token_arrays(links, embeddings, max_tokens=cfg.max_cres_per_gene)
+    arrays = build_token_arrays_from_matrix(links, ccre_ids, embeddings, max_tokens=cfg.max_cres_per_gene)
     np.savez_compressed(cfg.out_dir / "cre_token_arrays.npz", **arrays)
-    print(f"Wrote {cfg.out_dir / 'cre_embeddings.csv.gz'}")
+    print(f"Wrote resumable CRE matrix under {cfg.out_dir}")
     print(f"Wrote {cfg.out_dir / 'cre_token_arrays.npz'}")
 
 

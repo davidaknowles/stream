@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label
-from stream_model.genome import link_cres_to_genes, parse_gtf_tss
+from stream_model.genome import build_token_arrays, build_token_arrays_from_matrix, link_cres_to_genes, parse_gtf_tss
 
 
 def test_parse_gtf_tss_strand_coordinates(tmp_path: Path):
@@ -46,6 +46,28 @@ def test_link_cres_adds_synthetic_promoter_when_closest_is_far():
     assert promoter["ccre_id"] == "synthetic_promoter:g1"
     assert bool(promoter["is_synthetic"])
     assert promoter["token_rank"] == 0
+
+
+def test_matrix_token_packing_matches_embedding_table():
+    links = pd.DataFrame(
+        {
+            "gene_id": ["g1", "g1", "g2"],
+            "gene_name": ["G1", "G1", "G2"],
+            "ccre_id": ["c2", "c1", "c3"],
+            "token_rank": [1, 0, 0],
+            "signed_distance": [80, 0, 0],
+            "is_promoter": [False, True, True],
+        }
+    )
+    ids = np.asarray(["c1", "c2", "c3"])
+    matrix = np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
+    table = pd.DataFrame({"ccre_id": ids, "emb_0": matrix[:, 0], "emb_1": matrix[:, 1]})
+
+    expected = build_token_arrays(links, table, max_tokens=2)
+    actual = build_token_arrays_from_matrix(links, ids, matrix, max_tokens=2)
+
+    for key in expected:
+        np.testing.assert_array_equal(actual[key], expected[key])
 
 
 def test_adjacent_intervals_excludes_heldout_days():

@@ -226,3 +226,44 @@ def build_token_arrays(
         "is_promoter": is_promoter,
         "mask": mask,
     }
+
+
+def build_token_arrays_from_matrix(
+    links: pd.DataFrame,
+    ccre_ids: np.ndarray,
+    embeddings: np.ndarray,
+    max_tokens: int,
+) -> dict[str, np.ndarray]:
+    """Pack token arrays from a dense cCRE matrix without a wide DataFrame."""
+
+    if embeddings.ndim != 2 or len(ccre_ids) != embeddings.shape[0]:
+        raise ValueError("CRE ids and embedding matrix must have aligned two-dimensional shapes")
+    ccre_to_idx = {str(ccre_id): i for i, ccre_id in enumerate(ccre_ids)}
+    genes = links[["gene_id", "gene_name"]].drop_duplicates("gene_id").reset_index(drop=True)
+    gene_to_idx = {gid: i for i, gid in enumerate(genes["gene_id"])}
+    emb_dim = int(embeddings.shape[1])
+    token_embeddings = np.zeros((len(genes), max_tokens, emb_dim), dtype=np.float32)
+    signed_distance = np.zeros((len(genes), max_tokens), dtype=np.float32)
+    is_promoter = np.zeros((len(genes), max_tokens), dtype=bool)
+    mask = np.zeros((len(genes), max_tokens), dtype=bool)
+    for row in links.sort_values(["gene_id", "token_rank"]).itertuples(index=False):
+        rank = int(row.token_rank)
+        if rank >= max_tokens:
+            continue
+        try:
+            emb_index = ccre_to_idx[str(row.ccre_id)]
+        except KeyError as exc:
+            raise ValueError(f"Missing embedding for cCRE {row.ccre_id}") from exc
+        gi = gene_to_idx[row.gene_id]
+        token_embeddings[gi, rank] = embeddings[emb_index]
+        signed_distance[gi, rank] = float(row.signed_distance)
+        is_promoter[gi, rank] = bool(row.is_promoter)
+        mask[gi, rank] = True
+    return {
+        "gene_id": genes["gene_id"].to_numpy(dtype=str),
+        "gene_name": genes["gene_name"].to_numpy(dtype=str),
+        "embeddings": token_embeddings,
+        "signed_distance": signed_distance,
+        "is_promoter": is_promoter,
+        "mask": mask,
+    }

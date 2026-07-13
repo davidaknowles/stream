@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import sys
+import json
+import os
+from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
@@ -163,7 +166,55 @@ def embed_cre_table(
     sequence_bp: int,
     device: str,
     organism_index: int = 1,
-) -> pd.DataFrame:
+    cache_dir: str | Path | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Embed unique CREs into a resumable, disk-backed matrix.
+
+    AlphaGenome produces 3,072 values for every cCRE. Representing those
+    values as one Python dictionary per CRE transiently needs far more memory
+    than the numeric matrix itself. The cache is filled in sequence, flushed
+    after each batch, and can therefore resume after a preempted or OOM job.
+    """
+    unique = cre_table.drop_duplicates("ccre_id").reset_index(drop=True)
+    ccre_ids = unique["ccre_id"].astype(str).to_numpy()
+    if cache_dir is None:
+        return _embed_cre_table_in_memory(
+            unique,
+            ccre_ids,
+            fasta_path,
+            checkpoint,
+            repo,
+            batch_size,
+            sequence_bp,
+            device,
+            organism_index,
+        )
+
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(parents=True, exist_ok=True)
+    ids_path = cache_path / "cre_embedding_ids.npy"
+    matrix_path = cache_path / "cre_embedding_matrix.npy"
+    progress_path = cache_path / "cre_embedding_progress.json"
+    signature = sha256("\n".join(ccre_ids).encode()).hexdigest()
+    progress = _read_embedding_progress(progress_path)
+    valid_cache = (
+        progress.get("signature") == signature
+        and progress.get("total") == len(ccre_ids)
+        and ids_path.exists()
+        and matrix_path.exists()
+    )
+    if not valid_cache:
+        np.save(ids_path, ccre_ids)
+        matrix = np.lib.format.open_memmap(matrix_path, mode="w+", dtype=np.float32, shape=(len(ccre_ids), 3072))
+        matrix.flush()
+        done = 0
+        _write_embedding_progress(progress_path, {"signature": signature, "total": len(ccre_ids), "done": done})
+    else:
+        matrix = np.lib.format.open_memmap(matrix_path, mode="r+")
+        if matrix.shape != (len(ccre_ids), 3072):
+            raise ValueError(f"Unexpected CRE cache shape {matrix.shape} at {matrix_path}")
+        done = int(progress.get("done", 0))
+
     fasta = FastaExtractor(fasta_path)
     embedder = AlphaGenomeCREEmbedder(
         checkpoint=checkpoint,
@@ -172,37 +223,69 @@ def embed_cre_table(
         organism_index=organism_index,
         sequence_bp=sequence_bp,
     )
-    rows: list[dict[str, object]] = []
-    seqs: list[str] = []
-    ids: list[str] = []
     half = sequence_bp // 2
-    unique = cre_table.drop_duplicates("ccre_id")
+    total = len(unique)
+    for start in range(done, total, batch_size):
+        batch = unique.iloc[start : start + batch_size]
+        seqs = [fasta.fetch(row.chrom, int(row.midpoint) - half, int(row.midpoint) + half) for row in batch.itertuples(index=False)]
+        matrix[start : start + len(batch)] = embedder.embed_sequences(seqs)
+        done = start + len(batch)
+        matrix.flush()
+        _write_embedding_progress(progress_path, {"signature": signature, "total": total, "done": done})
+        if done % max(batch_size * 25, 1) == 0 or done == total:
+            print(f"AlphaGenome CRE embeddings: {done:,}/{total:,}", flush=True)
+    return ccre_ids, np.load(matrix_path, mmap_mode="r")
+
+
+def _embed_cre_table_in_memory(
+    unique: pd.DataFrame,
+    ccre_ids: np.ndarray,
+    fasta_path: str | Path,
+    checkpoint: str | Path,
+    repo: str | Path,
+    batch_size: int,
+    sequence_bp: int,
+    device: str,
+    organism_index: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    fasta = FastaExtractor(fasta_path)
+    embedder = AlphaGenomeCREEmbedder(
+        checkpoint=checkpoint,
+        repo=repo,
+        device=device,
+        organism_index=organism_index,
+        sequence_bp=sequence_bp,
+    )
+    embeddings = np.empty((len(unique), 3072), dtype=np.float32)
+    seqs: list[str] = []
+    half = sequence_bp // 2
     total = len(unique)
     done = 0
     for cre in unique.itertuples(index=False):
         center = int(cre.midpoint)
         seqs.append(fasta.fetch(cre.chrom, center - half, center + half))
-        ids.append(cre.ccre_id)
         if len(seqs) == batch_size:
-            rows.extend(_embed_batch(embedder, ids, seqs))
-            done += len(ids)
+            embeddings[done : done + len(seqs)] = embedder.embed_sequences(seqs)
+            done += len(seqs)
             if done % max(batch_size * 25, 1) == 0 or done == total:
                 print(f"AlphaGenome CRE embeddings: {done:,}/{total:,}", flush=True)
-            ids, seqs = [], []
-    rows.extend(_embed_batch(embedder, ids, seqs))
-    done += len(ids)
-    if ids:
+            seqs = []
+    if seqs:
+        embeddings[done : done + len(seqs)] = embedder.embed_sequences(seqs)
+        done += len(seqs)
         print(f"AlphaGenome CRE embeddings: {done:,}/{total:,}", flush=True)
-    return pd.DataFrame(rows)
+    return ccre_ids, embeddings
 
 
-def _embed_batch(embedder: AlphaGenomeCREEmbedder, ids: list[str], seqs: list[str]) -> list[dict[str, object]]:
-    if not ids:
-        return []
-    embeddings = embedder.embed_sequences(seqs)
-    rows = []
-    for ccre_id, emb in zip(ids, embeddings, strict=True):
-        row: dict[str, object] = {"ccre_id": ccre_id}
-        row.update({f"emb_{i}": float(value) for i, value in enumerate(emb)})
-        rows.append(row)
-    return rows
+def _read_embedding_progress(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    with path.open() as handle:
+        return json.load(handle)
+
+
+def _write_embedding_progress(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w") as handle:
+        json.dump(payload, handle)
+    os.replace(temporary, path)
