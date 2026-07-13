@@ -1,5 +1,12 @@
 # Lab Notebook
 
+## 2026-07-13
+
+- Checked the larger mouse STREAM panel results. The selected panels contain exactly 5,000 and 10,000 genes, and the legacy comparison panel contains 1,984 genes.
+- Expression-state held-out full-panel mean losses: 5k standard CFM 41.6054, FiLM 44.1599, cross-attention 45.4073; 10k standard CFM 21.1570, FiLM 23.6008, cross-attention 20.8592. On the full panel, moving from 5k to 10k improves all model families, with 10k cross-attention slightly best by loss and 10k standard CFM slightly best by MAE.
+- Legacy-panel fair comparison against the original 1,984-gene models: standard CFM improves slightly from 83.8798 to 82.8475 at 10k, cross-attention improves from 84.7884 to 80.5361 at 10k, and FiLM worsens from 82.7323 to 92.6408 at 10k. The 5k models do not improve the legacy-panel metric.
+- UCE-state results: 10k UCE cross-attention is the best full-panel result, with mean loss 20.2780 and MAE 1.5938. On the legacy panel, 10k UCE cross-attention is also best among the larger-panel runs, with mean loss 78.7470 and MAE 4.1303.
+
 ## 2026-07-12
 
 - Added the ZSCAPE zebrafish transfer workflow. It downloads public reference counts and metadata, GRCz11 genome/annotation, and ZEPA developmental cCRE workbooks; writes filtered control AnnData shards; caches zebrafish UCE embeddings; and links the primary cCRE catalogue to protein-coding HVGs with explicit promoter tokens. The dynamic supplement is included only when it exposes readable coordinate worksheets.
