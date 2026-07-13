@@ -19,6 +19,8 @@ notebooks/*_executed.ipynb
 /downloads/
 /outputs/
 /logs/
+/figures/zebrafish_transfer_displacement_mae.csv
+/figures/zebrafish_transfer_displacement_mae.png
 
 # Large single-cell data artifacts
 *.h5ad
