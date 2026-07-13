@@ -92,6 +92,8 @@ The implementation does not use a learned gene identity embedding by default. Ge
 
 \paragraph{Expression-only baseline.} The standard CFM baseline uses the same selected genes, same minibatch OT coupling, same interpolation path, and same target velocity, but replaces the sequence-conditioned gene module with an MLP $f_{\mathrm{CFM}}(x_t): \mathbb{R}^G \rightarrow \mathbb{R}^G$. This isolates the contribution of CRE/AlphaGenome conditioning from the flow matching training setup.
 
+\paragraph{Persistence baseline.} A no-model comparator predicts $f(x_t)=0$. Its predicted displacement is therefore zero: each OT-matched cell is assumed to retain its expression profile over the interval. It is evaluated from the same held-out endpoint cache and the same sampled OT pairings as learned models.
+
 \paragraph{UCE cell-state ablation.} We additionally evaluate a frozen 33-layer Universal Cell Embedding (UCE) representation $u=E(x)\in\mathbb{R}^{1280}$ as the input state to the vector field. OT is still solved using the selected expression panel, and the target velocity remains expression-valued. After sampling an OT pair $(x_k,x_{k+1})$ and a CFM time $\tau$, we interpolate both spaces with the same pair and time:
 $$x_t=(1-\tau)x_k+\tau x_{k+1},\qquad u_t=(1-\tau)E(x_k)+\tau E(x_{k+1}).$$
 The UCE baseline predicts expression velocity as $f_{\mathrm{CFM}}(u_t):\mathbb{R}^{1280}\rightarrow\mathbb{R}^{G}$; FiLM and cross-attention STREAM use $u_t$ in every layer-specific conditioning module while retaining the same CRE inputs and expression-valued promoter-token outputs. Thus UCE changes the state representation supplied to $f$, not the state space in which the dynamics or loss are defined.

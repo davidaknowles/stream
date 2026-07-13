@@ -15,6 +15,18 @@ from .ot import ot_cfm_batch, ot_cfm_batch_with_state
 from .train import predict_stream_chunked
 
 
+class ZeroVelocityBaseline(torch.nn.Module):
+    """Persistence baseline that predicts no expression change."""
+
+    def __init__(self, n_genes: int):
+        super().__init__()
+        self.n_genes = int(n_genes)
+        self.register_buffer("_device_anchor", torch.empty(0))
+
+    def forward(self, state: torch.Tensor, **_kwargs) -> torch.Tensor:
+        return state.new_zeros((state.shape[0], self.n_genes))
+
+
 @torch.no_grad()
 def evaluate_intervals(
     config,
@@ -25,7 +37,8 @@ def evaluate_intervals(
     eval_gene_sets: dict[str, list[int] | np.ndarray | None] | None = None,
     batch_cache: str | Path | None = None,
 ) -> pd.DataFrame:
-    device = next(model.parameters()).device
+    parameter = next(model.parameters(), None)
+    device = parameter.device if parameter is not None else next(model.buffers()).device
     rows = []
     model.eval()
     eval_gene_sets = eval_gene_sets or {"full": None}

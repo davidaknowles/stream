@@ -11,7 +11,7 @@ import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
-from stream_model.evaluate import evaluate_intervals
+from stream_model.evaluate import ZeroVelocityBaseline, evaluate_intervals
 from stream_model.train import artifact_stem, build_model, load_cre_npz
 
 
@@ -38,7 +38,8 @@ def _load_eval_gene_sets(gene_ids: list[str], specs: list[str], cfg: StreamConfi
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
-    parser.add_argument("--variant", choices=["standard_cfm", "film", "cross_attention"], required=True)
+    parser.add_argument("--variant", choices=["standard_cfm", "film", "cross_attention"])
+    parser.add_argument("--baseline", choices=["zero_velocity"], help="Evaluate a non-learned comparator instead of a checkpoint.")
     parser.add_argument("--hvg-csv", default=None)
     parser.add_argument("--n-hvg", type=int, default=None)
     parser.add_argument("--out-dir", default=None)
@@ -58,6 +59,8 @@ def main() -> None:
     parser.add_argument("--eval-cache", default=None, help="Reusable compressed endpoint cache for deterministic comparisons.")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
+    if (args.variant is None) == (args.baseline is None):
+        parser.error("Provide exactly one of --variant or --baseline")
 
     cfg = StreamConfig.from_yaml(args.config)
     apply_config_overrides(
@@ -69,7 +72,7 @@ def main() -> None:
         uce_embedding_dir=args.uce_embedding_dir,
         experiment_label=args.experiment_label,
     )
-    cfg.model_variant = args.variant
+    cfg.model_variant = args.variant or "standard_cfm"
     if args.batch_size is not None:
         cfg.batch_size = args.batch_size
     if args.gene_chunk_size is not None:
@@ -95,14 +98,18 @@ def main() -> None:
 
     cre_inputs = None
     cre_dim = None
-    if cfg.model_variant != "standard_cfm":
+    if args.baseline is None and cfg.model_variant != "standard_cfm":
         cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
-    model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
-    stem = artifact_stem(cfg)
-    checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{stem}.pt"
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(ckpt["model"])
+    if args.baseline is not None:
+        model = ZeroVelocityBaseline(len(gene_ids)).to(device)
+        stem = args.baseline
+    else:
+        model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
+        stem = artifact_stem(cfg)
+        checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{stem}.pt"
+        ckpt = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(ckpt["model"])
     eval_gene_sets = _load_eval_gene_sets(gene_ids, args.eval_gene_subset, cfg)
     metrics = evaluate_intervals(
         cfg,

@@ -22,8 +22,9 @@ def collect_metrics(root: Path) -> pd.DataFrame:
     combined = pd.concat(rows, ignore_index=True)
     combined["time_scale"] = combined["result_dir"].str.extract(r"_(relative|days)$", expand=False)
     combined["panel"] = combined["result_dir"].str.extract(r"hvg(\d+)", expand=False).astype(int)
-    combined["variant"] = combined["artifact"].str.extract(r"(standard_cfm|film|cross_attention)", expand=False)
+    combined["variant"] = combined["artifact"].str.extract(r"(standard_cfm|film|cross_attention|zero_velocity)", expand=False)
     combined["training"] = combined["artifact"].str.extract(r"(zero_shot|fine_tuned|zebrafish_only)", expand=False).fillna("zebrafish_only")
+    combined.loc[combined["variant"] == "zero_velocity", "training"] = "no_model"
     return combined
 
 

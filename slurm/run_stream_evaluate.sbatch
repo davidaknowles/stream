@@ -12,6 +12,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
 CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
 VARIANT="${VARIANT:-film}"
+BASELINE="${BASELINE:-}"
 BATCHES="${BATCHES:-20}"
 HVG_CSV="${HVG_CSV:-}"
 N_HVG="${N_HVG:-}"
@@ -35,7 +36,12 @@ if [[ ! -x "$STREAM_PYTHON" ]]; then
 else
   export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
 fi
-args=(--config "$CONFIG" --variant "$VARIANT" --batches "$BATCHES" --device cuda)
+args=(--config "$CONFIG" --batches "$BATCHES" --device cuda)
+if [[ -n "$BASELINE" ]]; then
+  args+=(--baseline "$BASELINE")
+else
+  args+=(--variant "$VARIANT")
+fi
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi

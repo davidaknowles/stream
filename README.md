@@ -19,7 +19,7 @@ The implemented comparison includes:
 - STREAM with FiLM conditioning on cell state;
 - STREAM with cross-attention conditioning on cell state.
 
-The FiLM variant maps cell state to layer-specific feature-wise scale/shift parameters applied after each regulatory token transformer layer. The cross-attention variant maps cell state to layer-specific context tokens that regulatory tokens attend to after each transformer layer. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison.
+The FiLM variant maps cell state to layer-specific feature-wise scale/shift parameters applied after each regulatory token transformer layer. The cross-attention variant maps cell state to layer-specific context tokens that regulatory tokens attend to after each transformer layer. Both STREAM variants use the same CRE links, AlphaGenome embeddings, promoter-token readout, selected genes, and minibatch OT setup as the baseline comparison. A no-model persistence baseline predicts zero velocity and is evaluated using the same cached OT-matched held-out endpoint batches.
 
 The cell-state input can be the expression panel or a frozen 33-layer UCE embedding. In the UCE setting, OT, CFM interpolation, and target velocity remain in expression space. The UCE representations of the matched endpoints are interpolated with the same CFM time and supplied to the vector field. This tests whether a foundation-model state representation improves prediction without redefining the expression-space dynamics.
 

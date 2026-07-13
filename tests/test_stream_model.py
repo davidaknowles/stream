@@ -302,3 +302,26 @@ def test_evaluate_intervals_uses_auxiliary_state_with_expression_target():
     metrics = evaluate_intervals(Config(), Sampler(), model, n_batches=1)
     assert metrics.loc[0, "cell_state"] == "uce"
     assert metrics.loc[0, "n_eval_genes"] == 3
+
+
+def test_zero_velocity_baseline_is_a_persistence_comparator():
+    from stream_model.data import IntervalBatch
+    from stream_model.evaluate import ZeroVelocityBaseline, evaluate_intervals
+
+    class Config:
+        ot_epsilon = 0.1
+        ot_iterations = 10
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((2, 3), dtype=np.float32),
+                x1=np.ones((2, 3), dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0="0",
+                day1="1",
+            )
+
+    metrics = evaluate_intervals(Config(), Sampler(), ZeroVelocityBaseline(3), n_batches=1)
+    assert metrics.loc[0, "displacement_mae"] == pytest.approx(1.0)
