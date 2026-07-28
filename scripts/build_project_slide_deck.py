@@ -289,9 +289,9 @@ def collect_zebrafish_summary() -> pd.DataFrame:
         raise FileNotFoundError(path)
     frame = pd.read_csv(path)
     frame = frame[frame["panel"] == 10000].copy()
+    frame = frame[frame["training"] != "no_model"].copy()
     frame["training_label"] = frame["training"].map(
         {
-            "no_model": "No model",
             "zero_shot": "Mouse zero-shot",
             "fine_tuned": "Mouse -> zebrafish",
             "zebrafish_only": "Zebrafish only",
@@ -385,14 +385,14 @@ def save_zebrafish_plot(summary: pd.DataFrame, path: Path) -> None:
     frame = frame[frame["eval_gene_set"] == "full"].copy()
     frame["training_label"] = pd.Categorical(
         frame["training_label"],
-        categories=["No model", "Mouse zero-shot", "Mouse -> zebrafish", "Zebrafish only"],
+        categories=["Mouse zero-shot", "Mouse -> zebrafish", "Zebrafish only"],
         ordered=True,
     )
     plot = (
         ggplot(frame, aes("training_label", "displacement_mae", fill="training_label"))
         + geom_col(width=0.72)
         + facet_wrap("~time_label")
-        + scale_fill_manual(values=["#9BA8B3", "#D89B3D", "#57A773", "#5B8FD1"])
+        + scale_fill_manual(values=["#D89B3D", "#57A773", "#5B8FD1"])
         + coord_cartesian(ylim=(0, 0.32))
         + labs(x="", y="Displacement MAE", fill="")
         + theme_bw(base_size=12)
@@ -573,7 +573,6 @@ def create_deck(output: Path) -> None:
         add_box(slide, "zero-shot", 6.0, 1.05, 1.7, 0.7, fill=LIGHT_GOLD, line=GOLD, bold=True)
         add_box(slide, "fine-tuned", 6.0, 2.15, 1.7, 0.7, fill=LIGHT_GREEN, line=GREEN, bold=True)
         add_box(slide, "zebrafish only", 6.0, 3.25, 1.7, 0.7, fill=LIGHT_BLUE, line=BLUE, bold=True)
-        add_box(slide, "no model", 6.0, 4.35, 1.7, 0.7, fill=RGBColor(232, 236, 240), line=MUTED, bold=True)
         add_box(slide, "held-out 36 and 72 hpf\nexpression displacement", 8.35, 2.45, 3.3, 1.05, fill=WHITE, line=RED, bold=True)
         for x1, y1, x2, y2 in [(3.05, 1.92, 3.55, 1.92), (5.35, 1.92, 6.0, 1.4), (5.35, 3.82, 6.0, 2.5), (5.35, 3.82, 6.0, 3.6), (7.7, 2.55, 8.35, 2.95)]:
             add_line(slide, x1, y1, x2, y2, color=MUTED, width=2)
@@ -586,13 +585,13 @@ def create_deck(output: Path) -> None:
         rel = zfish_summary[(zfish_summary["time_scale"] == "relative") & (zfish_summary["eval_gene_set"] == "full")]
         days = zfish_summary[(zfish_summary["time_scale"] == "days") & (zfish_summary["eval_gene_set"] == "full")]
         add_metric(slide, "relative fine-tuned", f"{rel[rel['training'] == 'fine_tuned']['displacement_mae'].iloc[0]:.3f}", 9.8, 1.35, 2.3, 0.95, LIGHT_GREEN)
-        add_metric(slide, "relative no model", f"{rel[rel['training'] == 'no_model']['displacement_mae'].iloc[0]:.3f}", 9.8, 2.7, 2.3, 0.95, RGBColor(232, 236, 240))
+        add_metric(slide, "relative zebrafish only", f"{rel[rel['training'] == 'zebrafish_only']['displacement_mae'].iloc[0]:.3f}", 9.8, 2.7, 2.3, 0.95, LIGHT_BLUE)
         add_metric(slide, "physical zero-shot", f"{days[days['training'] == 'zero_shot']['displacement_mae'].iloc[0]:.3f}", 9.8, 4.05, 2.3, 0.95, LIGHT_GOLD)
-        add_text(slide, "Lower displacement MAE is better. The persistence baseline remains strong.", 1.0, 6.2, 11.2, 0.35, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+        add_text(slide, "Lower displacement MAE is better. Bars compare learned transfer and target-only regimes.", 1.0, 6.2, 11.2, 0.35, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
         # 11
         slide = blank_slide(prs)
-        add_title(slide, "Cross-species generalization is visible but not yet enough to beat persistence")
+        add_title(slide, "Cross-species generalization depends on the time coordinate and training regime")
         ztab = zfish_summary[zfish_summary["eval_gene_set"] == "full"].copy()
         ztab = ztab.assign(
             Time=ztab["time_label"],
@@ -601,12 +600,12 @@ def create_deck(output: Path) -> None:
             MSE=ztab["displacement_mse"].map(lambda x: f"{x:.3f}"),
         )[["Time", "Regime", "MAE", "MSE"]]
         ztab["order"] = zfish_summary["time_scale"].map({"relative": 0, "days": 1}).to_numpy()
-        ztab["regime_order"] = zfish_summary["training"].map({"no_model": 0, "zero_shot": 1, "fine_tuned": 2, "zebrafish_only": 3}).to_numpy()
+        ztab["regime_order"] = zfish_summary["training"].map({"zero_shot": 0, "fine_tuned": 1, "zebrafish_only": 2}).to_numpy()
         ztab = ztab.sort_values(["order", "regime_order"]).drop(columns=["order", "regime_order"])
         add_table(slide, ztab, 0.75, 1.15, 7.5, 4.15, font_size=10)
         add_box(slide, "Relative time: fine-tuning beats zero-shot and zebrafish-only among learned models", 8.75, 1.35, 3.4, 1.0, fill=LIGHT_GREEN, line=GREEN, bold=True)
         add_box(slide, "Physical days: zero-shot is the strongest learned model, suggesting transferred timing is useful", 8.75, 2.75, 3.4, 1.05, fill=LIGHT_GOLD, line=GOLD, bold=True)
-        add_box(slide, "No-model displacement is still lower, so endpoint movement is small relative to expression scale", 8.75, 4.25, 3.4, 1.05, fill=LIGHT_RED, line=RED, bold=True)
+        add_box(slide, "Zebrafish-only training is weaker than transfer-started models in both time coordinates", 8.75, 4.25, 3.4, 1.05, fill=LIGHT_BLUE, line=BLUE, bold=True)
 
         # 12
         slide = blank_slide(prs)
@@ -616,7 +615,7 @@ def create_deck(output: Path) -> None:
                 ["Mouse panel size", "10k > 5k", "Cross-attn improves legacy-panel loss at 10k"],
                 ["State representation", "UCE helps STREAM", "Best mouse model is 10k UCE cross-attn"],
                 ["Sequence conditioning", "Useful but not automatic", "CFM remains a strong baseline"],
-                ["Cross-species", "Promising but incomplete", "Fine-tuning helps; persistence is hard to beat"],
+                ["Cross-species", "Transfer signal appears", "Fine-tuning helps in relative time"],
             ],
             columns=["Question", "Result", "Evidence"],
         )
