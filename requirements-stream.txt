@@ -4,6 +4,7 @@ numpy
 openpyxl
 pandas
 plotnine
+python-pptx
 pyfastx
 pysam
 pyyaml

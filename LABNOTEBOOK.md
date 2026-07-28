@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-07-28
+
+- Added a reproducible slide deck summarizing STREAM: multi-timepoint CFM, CRE-conditioned gene velocity prediction, UCE-state conditioning, mouse panel-size and UCE ablations, zebrafish benchmark setup, and cross-species transfer results.
+- The deck emphasizes diagrams, existing atlas figures, result plots, and summary tables. It reports that 10k UCE cross-attention is the best mouse model, while zebrafish transfer improves among learned models after fine-tuning but does not yet beat the persistence baseline on held-out displacement.
+
 ## 2026-07-13
 
 - Checked the larger mouse STREAM panel results. The selected panels contain exactly 5,000 and 10,000 genes, and the legacy comparison panel contains 1,984 genes.
