@@ -4,6 +4,7 @@
 
 - Added a reproducible slide deck summarizing STREAM: multi-timepoint CFM, CRE-conditioned gene velocity prediction, UCE-state conditioning, mouse panel-size and UCE ablations, zebrafish benchmark setup, and cross-species transfer results.
 - The deck emphasizes diagrams, existing atlas figures, result plots, and summary tables. It reports that 10k UCE cross-attention is the best mouse model and focuses the zebrafish transfer comparison on learned zero-shot, fine-tuned, and zebrafish-only regimes.
+- Added an illustrative velocity-stream slide and a references slide covering Flow Matching, UCE, AlphaGenome, and the ZSCAPE atlas.
 
 ## 2026-07-13
 

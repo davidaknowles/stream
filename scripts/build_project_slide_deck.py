@@ -523,6 +523,21 @@ def create_deck(output: Path) -> None:
 
         # 6
         slide = blank_slide(prs)
+        add_title(slide, "Learned vector fields can be visualized as velocity streams on the cell atlas")
+        stream_dir = ROOT / "outputs/stream/scvelo_stream"
+        stream_images = [
+            ("CFM", stream_dir / "velocity_embedding_stream_standard_cfm.png"),
+            ("FiLM STREAM", stream_dir / "velocity_embedding_stream_film.png"),
+            ("Cross-attn STREAM", stream_dir / "velocity_embedding_stream_cross_attention.png"),
+        ]
+        for idx, (label, image_path) in enumerate(stream_images):
+            x = 0.55 + idx * 4.2
+            add_box(slide, label, x + 0.72, 1.07, 2.7, 0.42, fill=LIGHT_BLUE if idx == 0 else LIGHT_GREEN, line=BLUE if idx == 0 else GREEN, size=12, bold=True)
+            add_image_fit(slide, image_path, x, 1.62, 3.9, 4.35)
+        add_text(slide, "Illustrative stream plots show how model-predicted velocities align with the atlas manifold.", 0.95, 6.28, 11.5, 0.35, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+
+        # 7
+        slide = blank_slide(prs)
         add_title(slide, "Mouse: 10k genes lowers full-panel loss; cross-attention is best by MSE")
         add_image_fit(slide, mouse_full_plot, 0.75, 1.15, 8.4, 4.55)
         full10 = mouse_summary[(mouse_summary["panel"] == 10000) & (mouse_summary["eval_gene_set"] == "full")]
@@ -534,7 +549,7 @@ def create_deck(output: Path) -> None:
         add_text(slide, str(best_mae["model_label"]), 9.55, 4.02, 2.2, 0.28, size=13, bold=True, align=PP_ALIGN.CENTER)
         add_text(slide, "Full-panel losses compare each model on its own selected genes; the legacy-panel slide controls for output genes.", 0.9, 6.25, 11.2, 0.4, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
-        # 7
+        # 8
         slide = blank_slide(prs)
         add_title(slide, "Fair legacy-panel scoring shows the 10k cross-attention gain is real")
         add_image_fit(slide, legacy_heatmap, 0.85, 1.2, 8.4, 3.8)
@@ -543,7 +558,7 @@ def create_deck(output: Path) -> None:
         add_box(slide, "10k UCE cross-attention improves further to 78.7", 9.65, 4.2, 2.55, 0.95, fill=LIGHT_GREEN, line=GREEN, bold=True)
         add_text(slide, "Numbers are held-out MSE on the same original gene panel; lower is better.", 1.0, 6.0, 11.0, 0.4, size=13, color=MUTED, align=PP_ALIGN.CENTER)
 
-        # 8
+        # 9
         slide = blank_slide(prs)
         add_title(slide, "The best mouse model is 10k UCE cross-attention")
         table = mouse_summary[
@@ -563,7 +578,7 @@ def create_deck(output: Path) -> None:
         add_metric(slide, "best full-panel MSE", "20.28", 1.2, 4.65, 2.6, 1.1, LIGHT_GREEN)
         add_metric(slide, "best full-panel MAE", "1.594", 4.05, 4.65, 2.6, 1.1, LIGHT_GREEN)
 
-        # 9
+        # 10
         slide = blank_slide(prs)
         add_title(slide, "Cross-species transfer swaps the genome and cell-state vocabulary, not the training objective")
         add_box(slide, "mouse 10k\nUCE cross-attn", 0.85, 1.45, 2.2, 0.95, fill=LIGHT_BLUE, line=BLUE, bold=True)
@@ -578,7 +593,7 @@ def create_deck(output: Path) -> None:
             add_line(slide, x1, y1, x2, y2, color=MUTED, width=2)
         add_text(slide, "Two time conventions are evaluated: physical days and organism-relative [0,1] time.", 1.1, 5.7, 10.9, 0.45, size=15, bold=True, align=PP_ALIGN.CENTER)
 
-        # 10
+        # 11
         slide = blank_slide(prs)
         add_title(slide, "Zebrafish transfer is challenging: fine-tuning is best learned model in relative time")
         add_image_fit(slide, zfish_plot, 0.85, 1.15, 8.6, 4.45)
@@ -589,7 +604,7 @@ def create_deck(output: Path) -> None:
         add_metric(slide, "physical zero-shot", f"{days[days['training'] == 'zero_shot']['displacement_mae'].iloc[0]:.3f}", 9.8, 4.05, 2.3, 0.95, LIGHT_GOLD)
         add_text(slide, "Lower displacement MAE is better. Bars compare learned transfer and target-only regimes.", 1.0, 6.2, 11.2, 0.35, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
-        # 11
+        # 12
         slide = blank_slide(prs)
         add_title(slide, "Cross-species generalization depends on the time coordinate and training regime")
         ztab = zfish_summary[zfish_summary["eval_gene_set"] == "full"].copy()
@@ -607,7 +622,7 @@ def create_deck(output: Path) -> None:
         add_box(slide, "Physical days: zero-shot is the strongest learned model, suggesting transferred timing is useful", 8.75, 2.75, 3.4, 1.05, fill=LIGHT_GOLD, line=GOLD, bold=True)
         add_box(slide, "Zebrafish-only training is weaker than transfer-started models in both time coordinates", 8.75, 4.25, 3.4, 1.05, fill=LIGHT_BLUE, line=BLUE, bold=True)
 
-        # 12
+        # 13
         slide = blank_slide(prs)
         add_title(slide, "Current picture: 10k + UCE + cross-attention works in mouse; transfer needs stronger alignment")
         takeaways = pd.DataFrame(
@@ -625,6 +640,23 @@ def create_deck(output: Path) -> None:
         add_box(slide, "stage-aware or time-conditioned transfer", 6.05, 4.6, 2.55, 0.72, fill=WHITE, line=GREEN, size=12, bold=True)
         add_box(slide, "rollout metrics beyond short displacement", 8.85, 4.6, 2.55, 0.72, fill=WHITE, line=PURPLE, size=12, bold=True)
         add_text(slide, "Main result: modeling more genes is helpful at 10k, especially when UCE state and cross-attention are combined.", 1.05, 6.2, 11.2, 0.45, size=16, bold=True, align=PP_ALIGN.CENTER)
+
+        # 14
+        slide = blank_slide(prs)
+        add_title(slide, "References anchor the flow-matching, cell-embedding, sequence, and zebrafish components")
+        refs = pd.DataFrame(
+            [
+                ["Conditional Flow Matching", "Lipman et al., Flow Matching for Generative Modeling, ICLR 2023 / arXiv:2210.02747"],
+                ["UCE cell state", "Rosen et al., Universal cell embeddings provide a foundation model for cell biology, Nature 2026"],
+                ["Sequence embeddings", "Avsec et al., Advancing regulatory variant effect prediction with AlphaGenome, Nature, doi:10.1038/s41586-025-10014-0"],
+                ["ZSCAPE atlas", "Saunders et al., Embryo-scale reverse genetics at single-cell resolution, Nature 2023"],
+                ["STREAM figures", "Generated from project outputs: atlas UMAP, held-out CFM metrics, UCE ablations, and transfer evaluations"],
+            ],
+            columns=["Component", "Reference"],
+        )
+        add_table(slide, refs, 0.65, 1.15, 12.0, 3.35, font_size=10)
+        add_box(slide, "Displayed plots and diagrams are generated from this repository's analysis outputs or drawn schematically in the deck builder.", 1.2, 5.25, 10.9, 0.85, fill=LIGHT_BLUE, line=BLUE, bold=True)
+        add_text(slide, "The deck is reproducible from the slide builder script and current result CSV/PNG artifacts.", 1.2, 6.32, 10.9, 0.35, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output)
