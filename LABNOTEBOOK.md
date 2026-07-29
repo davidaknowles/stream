@@ -1,5 +1,11 @@
 # Lab Notebook
 
+## 2026-07-29
+
+- Expanded `docs/main.tex` from a methods draft into a paper-style manuscript with Abstract, Introduction, Results, Methods, Discussion, figures, data-source table, result tables, and inline references.
+- Added reproducible manuscript result panels under `docs/figures/` and a `scripts/build_paper_figures.py` helper that reuses the slide-deck result summaries. The manuscript reports mouse 5k/10k held-out results, legacy-panel fair comparison, and zebrafish learned transfer regimes without showing the cross-species no-model comparator.
+- Methods now explicitly document data provenance: mouse JAX/Shendure time-lapse expression data with ENCODE/SCREEN mm10 cCREs, and ZSCAPE control zebrafish data with ZEPA GRCz11 cCREs. The text clarifies that UCE is used for state conditioning while the predicted velocities and losses remain expression-valued.
+
 ## 2026-07-28
 
 - Added a reproducible slide deck summarizing STREAM: multi-timepoint CFM, CRE-conditioned gene velocity prediction, UCE-state conditioning, mouse panel-size and UCE ablations, zebrafish benchmark setup, and cross-species transfer results.

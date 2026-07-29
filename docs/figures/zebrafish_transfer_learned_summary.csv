@@ -1,0 +1,7 @@
+time_scale,panel,variant,training,eval_gene_set,displacement_mae,displacement_mse,velocity_mae,training_label,time_label
+days,10000,cross_attention,fine_tuned,full,0.2099563654512166,3.3514070227742194,1.146374450623989,Mouse -> zebrafish,Physical days
+days,10000,cross_attention,zebrafish_only,full,0.2968280956149101,3.4143925182521344,1.3597607433795929,Zebrafish only,Physical days
+days,10000,cross_attention,zero_shot,full,0.1747107855975627,3.336694084107876,1.0588757149875163,Mouse zero-shot,Physical days
+relative,10000,cross_attention,fine_tuned,full,0.1311414210125803,3.325231175124645,3.0970040395855905,Mouse -> zebrafish,Relative time
+relative,10000,cross_attention,zebrafish_only,full,0.1567307814955711,3.3310025170445443,3.300840258598328,Zebrafish only,Relative time
+relative,10000,cross_attention,zero_shot,full,0.1844893962144851,3.347980243712664,3.511789345741272,Mouse zero-shot,Relative time

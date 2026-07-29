@@ -1,0 +1,25 @@
+panel,model,model_label,state,family,eval_gene_set,n_eval_genes,mean_loss,mean_mae
+5000,cross_attention,Cross-attn,Expression state,cross_attention,full,5000,45.407344341278076,2.8706795930862428
+5000,cross_attention,Cross-attn,Expression state,cross_attention,legacy_1984,1984,96.80709304809571,4.55253781080246
+5000,cross_attention_uce,Cross-attn + UCE,UCE state,cross_attention,full,5000,43.76548795700073,2.996459412574768
+5000,cross_attention_uce,Cross-attn + UCE,UCE state,cross_attention,legacy_1984,1984,91.96758880615235,4.618782234191895
+5000,film,FiLM,Expression state,film,full,5000,44.15994834899902,2.8086915969848634
+5000,film,FiLM,Expression state,film,legacy_1984,1984,93.38044128417968,4.506029593944549
+5000,film_uce,FiLM + UCE,UCE state,film,full,5000,41.772283744812015,2.819792425632477
+5000,film_uce,FiLM + UCE,UCE state,film,legacy_1984,1984,87.65663394927978,4.47642867565155
+5000,standard_cfm,CFM,Expression state,standard_cfm,full,5000,41.605386352539064,2.6931804180145265
+5000,standard_cfm,CFM,Expression state,standard_cfm,legacy_1984,1984,88.28576011657715,4.384511458873749
+5000,standard_cfm_uce,CFM + UCE,UCE state,standard_cfm,full,5000,41.94524431228638,2.870041346549988
+5000,standard_cfm_uce,CFM + UCE,UCE state,standard_cfm,legacy_1984,1984,89.14207248687744,4.630989265441895
+10000,cross_attention,Cross-attn,Expression state,cross_attention,full,10000,20.859232425689697,1.7423658788204193
+10000,cross_attention,Cross-attn,Expression state,cross_attention,legacy_1984,1984,80.53614835739135,4.322559642791748
+10000,cross_attention_uce,Cross-attn + UCE,UCE state,cross_attention,full,10000,20.278044652938842,1.5938183963298798
+10000,cross_attention_uce,Cross-attn + UCE,UCE state,cross_attention,legacy_1984,1984,78.74695644378662,4.130323326587677
+10000,film,FiLM,Expression state,film,full,10000,23.60084137916565,1.6688201665878295
+10000,film,FiLM,Expression state,film,legacy_1984,1984,92.64083080291748,4.434112644195556
+10000,film_uce,FiLM + UCE,UCE state,film,full,10000,22.091947078704834,1.6287936985492706
+10000,film_uce,FiLM + UCE,UCE state,film,legacy_1984,1984,86.79604263305664,4.311021161079407
+10000,standard_cfm,CFM,Expression state,standard_cfm,full,10000,21.157029819488525,1.602350890636444
+10000,standard_cfm,CFM,Expression state,standard_cfm,legacy_1984,1984,82.84754505157471,4.297140491008759
+10000,standard_cfm_uce,CFM + UCE,UCE state,standard_cfm,full,10000,22.748686361312867,1.7765664398670196
+10000,standard_cfm_uce,CFM + UCE,UCE state,standard_cfm,legacy_1984,1984,89.87145099639892,4.609822380542755
