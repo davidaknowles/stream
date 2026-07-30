@@ -6,6 +6,7 @@
 - Added reproducible manuscript result panels under `docs/figures/` and a `scripts/build_paper_figures.py` helper that reuses the slide-deck result summaries. The manuscript reports mouse 5k/10k held-out results, legacy-panel fair comparison, and zebrafish learned transfer regimes without showing the cross-species no-model comparator.
 - Methods now explicitly document data provenance: mouse JAX/Shendure time-lapse expression data with ENCODE/SCREEN mm10 cCREs, and ZSCAPE control zebrafish data with ZEPA GRCz11 cCREs. The text clarifies that UCE is used for state conditioning while the predicted velocities and losses remain expression-valued.
 - Added infrastructure for a mouse held-out-gene dynamics prediction test. The benchmark keeps OT, interpolation, cell state, and model outputs on the full 10k mouse gene panel, but restricts the training loss to a reproducible 8k-gene subset and evaluates velocity prediction on the 2k held-out genes. This tests whether CRE-conditioned shared gene weights generalize to genes not used in the loss; expression-only CFM is not a clean baseline because untrained output coordinates have gene-specific heads.
+- Submitted the 10k UCE cross-attention held-out-gene mouse benchmark. Gene split: `outputs/stream_hvg10000/gene_holdout_seed1337_frac20_{train,heldout}.csv`. Train job `19392758`; dependent evaluation job `19392764` reports full, train-gene, and held-out-gene metrics.
 
 ## 2026-07-28
 
