@@ -283,7 +283,39 @@ def test_evaluate_intervals_reports_full_and_subset_gene_sets():
         ("legacy", 2),
     }
     assert len(metrics) == 4
-    assert {"displacement_mse", "displacement_mae"}.issubset(metrics.columns)
+    assert {"displacement_mse", "displacement_mae", "displacement_r2"}.issubset(metrics.columns)
+
+
+def test_evaluate_intervals_reports_displacement_r2():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.evaluate import evaluate_intervals
+
+    class Config:
+        ot_epsilon = 0.1
+        ot_iterations = 10
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((2, 3), dtype=np.float32),
+                x1=np.asarray([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]], dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0="0",
+                day1="1",
+            )
+
+    class ZeroModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, x):
+            return torch.zeros_like(x) + self.weight
+
+    metrics = evaluate_intervals(Config(), Sampler(), ZeroModel(), n_batches=1)
+    assert metrics.loc[0, "displacement_r2"] == pytest.approx(-1.5)
 
 
 def test_evaluate_intervals_uses_auxiliary_state_with_expression_target():

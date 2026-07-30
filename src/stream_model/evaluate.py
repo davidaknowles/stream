@@ -80,6 +80,16 @@ def evaluate_intervals(
             target_eval = target if indices is None else target.index_select(1, indices)
             err = (pred_eval - target_eval).detach().cpu().numpy()
             displacement_err = (pred_eval - target_eval) * float(batch.t1 - batch.t0)
+            target_displacement = target_eval * float(batch.t1 - batch.t0)
+            residual_sum_squares = torch.sum(displacement_err.square())
+            total_sum_squares = torch.sum(
+                (target_displacement - target_displacement.mean()).square()
+            )
+            displacement_r2 = (
+                1.0 - residual_sum_squares / total_sum_squares
+                if total_sum_squares > 0
+                else torch.tensor(float("nan"), device=device)
+            )
             rows.append(
                 {
                     "batch": batch_index,
@@ -92,6 +102,7 @@ def evaluate_intervals(
                     "velocity_mae": float(np.mean(np.abs(err))),
                     "displacement_mse": float(torch.mean(displacement_err.square()).cpu()),
                     "displacement_mae": float(torch.mean(displacement_err.abs()).cpu()),
+                    "displacement_r2": float(displacement_r2.cpu()),
                 }
             )
     return pd.DataFrame(rows)
