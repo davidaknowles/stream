@@ -24,6 +24,7 @@ UCE_EMBEDDING_DIR="${UCE_EMBEDDING_DIR:-}"
 WANDB_MODE="${WANDB_MODE:-}"
 EXPERIMENT_LABEL="${EXPERIMENT_LABEL:-}"
 INIT_CHECKPOINT="${INIT_CHECKPOINT:-}"
+LOSS_GENE_SUBSET="${LOSS_GENE_SUBSET:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -52,4 +53,5 @@ if [[ -n "$UCE_EMBEDDING_DIR" ]]; then args+=(--uce-embedding-dir "$UCE_EMBEDDIN
 if [[ -n "$WANDB_MODE" ]]; then args+=(--wandb-mode "$WANDB_MODE"); fi
 if [[ -n "$EXPERIMENT_LABEL" ]]; then args+=(--experiment-label "$EXPERIMENT_LABEL"); fi
 if [[ -n "$INIT_CHECKPOINT" ]]; then args+=(--init-checkpoint "$INIT_CHECKPOINT"); fi
+if [[ -n "$LOSS_GENE_SUBSET" ]]; then args+=(--loss-gene-subset "$LOSS_GENE_SUBSET"); fi
 "$STREAM_PYTHON" scripts/train_stream.py "${args[@]}"

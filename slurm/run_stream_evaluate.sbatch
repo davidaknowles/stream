@@ -45,7 +45,12 @@ fi
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
-if [[ -n "$EVAL_GENE_SUBSET" ]]; then args+=(--eval-gene-subset "$EVAL_GENE_SUBSET"); fi
+if [[ -n "$EVAL_GENE_SUBSET" ]]; then
+  IFS=',' read -r -a eval_gene_subsets <<< "$EVAL_GENE_SUBSET"
+  for subset in "${eval_gene_subsets[@]}"; do
+    if [[ -n "$subset" ]]; then args+=(--eval-gene-subset "$subset"); fi
+  done
+fi
 if [[ -n "$BATCH_SIZE" ]]; then args+=(--batch-size "$BATCH_SIZE"); fi
 if [[ -n "$GENE_CHUNK_SIZE" ]]; then args+=(--gene-chunk-size "$GENE_CHUNK_SIZE"); fi
 if [[ -n "$CELL_STATE" ]]; then args+=(--cell-state "$CELL_STATE"); fi

@@ -81,19 +81,25 @@ def stream_chunked_loss(
     target: torch.Tensor,
     cre_inputs: dict[str, torch.Tensor],
     gene_chunk_size: int,
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Compute full-panel STREAM MSE without materializing all genes at once."""
+    """Compute STREAM MSE without materializing all genes at once."""
 
     n_genes = target.shape[1]
-    if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
-        return mse_cfm_loss(model(x, **cre_inputs), target)
+    indices = _loss_gene_index_tensor(loss_gene_indices, target.device)
+    if indices is None:
+        if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
+            return mse_cfm_loss(model(x, **cre_inputs), target)
+        indices = torch.arange(n_genes, device=target.device, dtype=torch.long)
+    if gene_chunk_size <= 0 or gene_chunk_size >= len(indices):
+        pred = model(x, **cre_inputs, gene_indices=indices)
+        return mse_cfm_loss(pred, target.index_select(1, indices))
     loss = target.new_tensor(0.0)
-    for start in range(0, n_genes, gene_chunk_size):
-        end = min(start + gene_chunk_size, n_genes)
-        gene_indices = torch.arange(start, end, device=x.device, dtype=torch.long)
+    for gene_indices in indices.split(gene_chunk_size):
         pred = model(x, **cre_inputs, gene_indices=gene_indices)
-        loss = loss + mse_cfm_loss(pred, target[:, start:end]) * (end - start)
-    return loss / n_genes
+        target_chunk = target.index_select(1, gene_indices)
+        loss = loss + mse_cfm_loss(pred, target_chunk) * (len(gene_indices) / len(indices))
+    return loss
 
 
 def backward_stream_chunked_loss(
@@ -102,23 +108,43 @@ def backward_stream_chunked_loss(
     target: torch.Tensor,
     cre_inputs: dict[str, torch.Tensor],
     gene_chunk_size: int,
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
 ) -> float:
-    """Backpropagate full-panel STREAM MSE one gene chunk at a time."""
+    """Backpropagate STREAM MSE one gene chunk at a time."""
 
     n_genes = target.shape[1]
-    if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
-        loss = mse_cfm_loss(model(x, **cre_inputs), target)
+    indices = _loss_gene_index_tensor(loss_gene_indices, target.device)
+    if indices is None:
+        if gene_chunk_size <= 0 or gene_chunk_size >= n_genes:
+            loss = mse_cfm_loss(model(x, **cre_inputs), target)
+            loss.backward()
+            return float(loss.detach().cpu())
+        indices = torch.arange(n_genes, device=target.device, dtype=torch.long)
+    if gene_chunk_size <= 0 or gene_chunk_size >= len(indices):
+        pred = model(x, **cre_inputs, gene_indices=indices)
+        loss = mse_cfm_loss(pred, target.index_select(1, indices))
         loss.backward()
         return float(loss.detach().cpu())
     total = 0.0
-    for start in range(0, n_genes, gene_chunk_size):
-        end = min(start + gene_chunk_size, n_genes)
-        gene_indices = torch.arange(start, end, device=x.device, dtype=torch.long)
+    for gene_indices in indices.split(gene_chunk_size):
         pred = model(x, **cre_inputs, gene_indices=gene_indices)
-        loss = mse_cfm_loss(pred, target[:, start:end]) * ((end - start) / n_genes)
+        target_chunk = target.index_select(1, gene_indices)
+        loss = mse_cfm_loss(pred, target_chunk) * (len(gene_indices) / len(indices))
         loss.backward()
         total += float(loss.detach().cpu())
     return total
+
+
+def _loss_gene_index_tensor(
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if loss_gene_indices is None:
+        return None
+    indices = torch.as_tensor(loss_gene_indices, device=device, dtype=torch.long).flatten()
+    if len(indices) == 0:
+        raise ValueError("loss_gene_indices must not be empty")
+    return indices
 
 
 def train_steps(
@@ -129,8 +155,10 @@ def train_steps(
     cre_inputs=None,
     steps_per_epoch: int = 100,
     wandb_run=None,
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
 ) -> list[dict[str, float]]:
     device = next(model.parameters()).device
+    loss_index_tensor = _loss_gene_index_tensor(loss_gene_indices, device)
     metrics: list[dict[str, float]] = []
     for epoch in range(config.epochs):
         model.train()
@@ -159,11 +187,23 @@ def train_steps(
             optimizer.zero_grad(set_to_none=True)
             if cre_inputs is None:
                 pred = model(state_t)
-                loss = mse_cfm_loss(pred, target)
+                if loss_index_tensor is not None:
+                    pred = pred.index_select(1, loss_index_tensor)
+                    target_loss = target.index_select(1, loss_index_tensor)
+                else:
+                    target_loss = target
+                loss = mse_cfm_loss(pred, target_loss)
                 loss.backward()
                 value = float(loss.detach().cpu())
             else:
-                value = backward_stream_chunked_loss(model, state_t, target, cre_inputs, config.gene_chunk_size)
+                value = backward_stream_chunked_loss(
+                    model,
+                    state_t,
+                    target,
+                    cre_inputs,
+                    config.gene_chunk_size,
+                    loss_gene_indices=loss_index_tensor,
+                )
             optimizer.step()
             row = {"epoch": epoch, "step": step, "loss": value}
             metrics.append(row)

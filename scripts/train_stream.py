@@ -14,6 +14,21 @@ from stream_model.data import H5adIntervalSampler
 from stream_model.train import artifact_stem, build_model, load_cre_npz, train_steps
 
 
+def _load_gene_subset_indices(gene_ids: list[str], subset_csv: str | None, cfg: StreamConfig) -> list[int] | None:
+    if subset_csv is None:
+        return None
+    path = cfg.resolve_path(subset_csv)
+    reference = pd.read_csv(path)
+    if "gene_id" not in reference.columns:
+        raise ValueError(f"{path} must contain a gene_id column")
+    ref_ids = reference["gene_id"].astype(str).drop_duplicates().tolist()
+    indices = pd.Index(gene_ids).get_indexer(ref_ids)
+    if (indices < 0).any():
+        missing = pd.Index(ref_ids)[indices < 0][:10].tolist()
+        raise ValueError(f"{path} contains genes absent from this model panel: {missing}")
+    return indices.tolist()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
@@ -29,6 +44,11 @@ def main() -> None:
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default=None)
     parser.add_argument("--experiment-label", default=None)
     parser.add_argument("--init-checkpoint", default=None)
+    parser.add_argument(
+        "--loss-gene-subset",
+        default=None,
+        help="Optional CSV with a gene_id column. Training loss is restricted to these genes, while OT and state still use the full panel.",
+    )
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -56,6 +76,7 @@ def main() -> None:
 
     selected = pd.read_csv(cfg.out_dir / "selected_genes.csv")
     gene_ids = selected["gene_id"].tolist()
+    loss_gene_indices = _load_gene_subset_indices(gene_ids, args.loss_gene_subset, cfg)
     with (cfg.out_dir / "timepoint_split.json").open() as handle:
         split = json.load(handle)
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
@@ -94,6 +115,9 @@ def main() -> None:
             config=cfg.to_dict(),
             tags=["stream", cfg.model_variant, cfg.cell_state, cfg.dataset_name, cfg.time_coordinate],
         )
+        if loss_gene_indices is not None:
+            wandb_run.config["loss_gene_subset"] = args.loss_gene_subset
+            wandb_run.config["n_loss_genes"] = len(loss_gene_indices)
     metrics = train_steps(
         cfg,
         sampler,
@@ -102,6 +126,7 @@ def main() -> None:
         cre_inputs=cre_inputs,
         steps_per_epoch=args.steps_per_epoch,
         wandb_run=wandb_run,
+        loss_gene_indices=loss_gene_indices,
     )
 
     stem = artifact_stem(cfg)

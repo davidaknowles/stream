@@ -182,9 +182,20 @@ def test_stream_chunked_prediction_matches_full_forward(variant):
     chunked = predict_stream_chunked(model, x, cre_inputs, gene_chunk_size=3)
     chunked_loss = stream_chunked_loss(model, x, target, cre_inputs, gene_chunk_size=3)
     full_loss = torch.mean((full - target) ** 2)
+    subset_indices = torch.tensor([0, 2, 5], dtype=torch.long)
+    subset_loss = stream_chunked_loss(
+        model,
+        x,
+        target,
+        cre_inputs,
+        gene_chunk_size=2,
+        loss_gene_indices=subset_indices,
+    )
+    manual_subset_loss = torch.mean((full.index_select(1, subset_indices) - target.index_select(1, subset_indices)) ** 2)
 
     assert torch.allclose(chunked, full, atol=1e-5)
     assert torch.allclose(chunked_loss, full_loss, atol=1e-5)
+    assert torch.allclose(subset_loss, manual_subset_loss, atol=1e-5)
 
 
 @pytest.mark.parametrize("variant", ["film", "cross_attention"])
