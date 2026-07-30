@@ -46,7 +46,8 @@ if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
 if [[ -n "$EVAL_GENE_SUBSET" ]]; then
-  IFS=',' read -r -a eval_gene_subsets <<< "$EVAL_GENE_SUBSET"
+  eval_gene_subset_list="${EVAL_GENE_SUBSET//;/,}"
+  IFS=',' read -r -a eval_gene_subsets <<< "$eval_gene_subset_list"
   for subset in "${eval_gene_subsets[@]}"; do
     if [[ -n "$subset" ]]; then args+=(--eval-gene-subset "$subset"); fi
   done
