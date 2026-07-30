@@ -9,6 +9,7 @@
 - Submitted the 10k UCE cross-attention held-out-gene mouse benchmark. Gene split: `outputs/stream_hvg10000/gene_holdout_seed1337_frac20_{train,heldout}.csv`. Train job `19392758`; dependent evaluation job `19392764` reports full, train-gene, and held-out-gene metrics.
 - The mouse held-out-gene benchmark completed successfully. Across 20 held-out-timepoint evaluation batches, velocity MAE was 1.7334 on the 8,000 genes included in the loss and 1.7884 on the 2,000 excluded genes, a 3.2% held-out-gene gap. Full-panel velocity MAE was 1.7444. Displacement MAE showed the same 3.2% gap (0.4334 versus 0.4471).
 - The held-out-gene velocity MAE was higher for every time interval: E9.25-E9.5, 1.7494 versus 1.7069; E9.5-E9.75, 1.9313 versus 1.8698; E10.25-E10.5, 1.6558 versus 1.6123; and E10.5-E10.75, 1.7610 versus 1.6880. Absolute loss and MSE should not be compared directly between gene subsets because their target-expression scale distributions differ.
+- Added displacement R-squared relative to the mean target displacement within each evaluation batch. The rerun yielded mean R-squared of -0.0101 on training genes, -0.0118 on held-out genes, and -0.0104 on the full panel; only 2 of 20 batches were positive. Thus held-out genes perform similarly to fitted genes, but the model explains essentially none of the exact OT-paired displacement variance. This pairwise metric includes irreducible minibatch-OT coupling variation and should be complemented by a distribution-level transported-endpoint metric.
 
 ## 2026-07-28
 
