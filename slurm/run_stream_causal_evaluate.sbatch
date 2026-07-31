@@ -21,7 +21,8 @@ PCA_CELLS="${PCA_CELLS:-10000}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
 export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
-args=(--config "$CONFIG" --out-dir "$OUT_DIR" --experiment-label "$EXPERIMENT_LABEL" --cells-per-interval "$CELLS_PER_INTERVAL" --integration-steps "$INTEGRATION_STEPS" --pca-cells "$PCA_CELLS")
+integration_steps_arg="${INTEGRATION_STEPS//;/,}"
+args=(--config "$CONFIG" --out-dir "$OUT_DIR" --experiment-label "$EXPERIMENT_LABEL" --cells-per-interval "$CELLS_PER_INTERVAL" --integration-steps "$integration_steps_arg" --pca-cells "$PCA_CELLS")
 if [[ -n "$EVAL_GENE_SUBSET" ]]; then
   eval_gene_subset_list="${EVAL_GENE_SUBSET//;/,}"
   IFS=',' read -r -a eval_gene_subsets <<< "$eval_gene_subset_list"
