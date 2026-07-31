@@ -212,6 +212,8 @@ def collect_mouse_summary() -> pd.DataFrame:
     for panel in (5000, 10000):
         for path in sorted((ROOT / f"outputs/stream_hvg{panel}").glob("eval_metrics_*.csv")):
             model = path.stem.removeprefix("eval_metrics_")
+            if model not in label_map:
+                continue
             frame = pd.read_csv(path)
             frame["panel"] = panel
             frame["model"] = model
@@ -231,6 +233,8 @@ def collect_original_legacy() -> pd.DataFrame:
     label_map = {"standard_cfm": "CFM", "film": "FiLM", "cross_attention": "Cross-attn"}
     for path in sorted((ROOT / "outputs/stream").glob("eval_metrics_*.csv")):
         model = path.stem.removeprefix("eval_metrics_")
+        if model not in label_map:
+            continue
         frame = pd.read_csv(path)
         rows.append(
             {
@@ -445,13 +449,13 @@ def create_deck(output: Path) -> None:
         add_title(slide, "Development is observed as snapshots, but the target is a continuous vector field")
         add_image_fit(slide, ROOT / "figures/full_umap_by_major_trajectory.png", 0.55, 1.08, 5.9, 5.9)
         add_table(slide, data_summary, 6.7, 1.25, 5.95, 1.65, font_size=9)
-        add_box(slide, "Held-out timepoints test temporal interpolation around missing stages", 7.0, 3.45, 5.05, 0.72, fill=LIGHT_RED, line=RED, bold=True)
+        add_box(slide, "Causal rollout predicts held-out stages from observed source cells", 7.0, 3.45, 5.05, 0.72, fill=LIGHT_RED, line=RED, bold=True)
         add_box(slide, "The same output space is used for CFM and STREAM, so sequence conditioning is the isolated change", 7.0, 4.45, 5.05, 0.82, fill=WHITE, line=RGBColor(210, 216, 222), size=12)
         add_box(slide, "Cross-species tests swap regulatory sequence and UCE gene tokens while retaining expression-valued targets", 7.0, 5.55, 5.05, 0.95, fill=WHITE, line=RGBColor(210, 216, 222), size=12)
 
         # 3
         slide = blank_slide(prs)
-        add_title(slide, "Multi-timepoint CFM trains on adjacent intervals and scores intervals touching held-out stages")
+        add_title(slide, "Multi-timepoint CFM fits paths; causal evaluation rolls only into held-out stages")
         y = 2.35
         xs = [0.9, 2.05, 3.2, 4.35, 5.5, 6.65, 7.8, 8.95, 10.1, 11.25]
         labels = ["E8.5", "E8.75", "E9.0", "E9.25", "E9.5", "E9.75", "E10.0", "E10.25", "E10.5", "E10.75"]
@@ -463,7 +467,7 @@ def create_deck(output: Path) -> None:
         for i in range(len(xs) - 1):
             color = RED if labels[i] in held or labels[i + 1] in held else GREEN
             add_line(slide, xs[i] + 0.82, y + 0.24, xs[i + 1], y + 0.24, color=color, width=2.2)
-        add_text(slide, "green = trained adjacent intervals     red = held-out-touching evaluation intervals", 2.3, 3.05, 8.6, 0.25, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+        add_text(slide, "green = training intervals     red = excluded intervals; causal scoring uses observed-to-held-out direction", 1.65, 3.05, 9.9, 0.25, size=12, color=MUTED, align=PP_ALIGN.CENTER)
         add_box(slide, "1. sample cells at t_k", 0.9, 4.25, 2.2, 0.7, fill=LIGHT_BLUE, line=BLUE, bold=True)
         add_box(slide, "2. minibatch OT pairs cells", 3.45, 4.25, 2.3, 0.7, fill=LIGHT_GOLD, line=GOLD, bold=True)
         add_box(slide, "3. interpolate x_t at random tau", 6.1, 4.25, 2.45, 0.7, fill=LIGHT_GREEN, line=GREEN, bold=True)
@@ -495,12 +499,12 @@ def create_deck(output: Path) -> None:
 
         # 5
         slide = blank_slide(prs)
-        add_title(slide, "UCE changes the state representation; CFM targets remain expression-valued")
+        add_title(slide, "Online UCE closes the expression-space vector field without endpoint leakage")
         add_box(slide, "expression endpoints\nx_k, x_k+1", 0.85, 1.35, 2.0, 0.9, fill=LIGHT_BLUE, line=BLUE, bold=True)
         add_box(slide, "OT pairs and\nlinear paths", 3.2, 1.35, 2.0, 0.9, fill=LIGHT_GOLD, line=GOLD, bold=True)
         add_box(slide, "target expression\nvelocity", 5.55, 1.35, 2.0, 0.9, fill=WHITE, line=RED, bold=True)
-        add_box(slide, "frozen UCE\nencoder", 3.2, 3.35, 2.0, 0.9, fill=LIGHT_GREEN, line=GREEN, bold=True)
-        add_box(slide, "interpolated\nu_t in R^1280", 5.55, 3.35, 2.0, 0.9, fill=LIGHT_GREEN, line=GREEN, bold=True)
+        add_box(slide, "interpolated\nexpression x_t", 3.2, 3.35, 2.0, 0.9, fill=LIGHT_BLUE, line=BLUE, bold=True)
+        add_box(slide, "frozen UCE\nE(x_t) in R^1280", 5.55, 3.35, 2.0, 0.9, fill=LIGHT_GREEN, line=GREEN, bold=True)
         add_box(slide, "STREAM / CFM\nvector field", 7.9, 2.35, 2.0, 0.9, fill=WHITE, line=PURPLE, bold=True)
         add_box(slide, "predicted expression\nvelocity", 10.25, 2.35, 2.0, 0.9, fill=WHITE, line=RED, bold=True)
         for x1, y1, x2, y2 in [(2.85, 1.8, 3.2, 1.8), (5.2, 1.8, 5.55, 1.8), (2.85, 1.95, 3.2, 3.8), (5.2, 3.8, 5.55, 3.8), (7.55, 3.8, 7.9, 2.8), (9.9, 2.8, 10.25, 2.8)]:
@@ -510,7 +514,7 @@ def create_deck(output: Path) -> None:
             pd.DataFrame(
                 [
                     ["Expression state", "x_t in R^G", "G-gene velocity"],
-                    ["UCE state", "u_t in R^1280", "G-gene velocity"],
+                    ["Online UCE", "E(x_t) in R^1280", "G-gene velocity"],
                 ],
                 columns=["Run", "Input to f", "Output / loss"],
             ),
@@ -538,7 +542,7 @@ def create_deck(output: Path) -> None:
 
         # 7
         slide = blank_slide(prs)
-        add_title(slide, "Mouse: 10k genes lowers full-panel loss; cross-attention is best by MSE")
+        add_title(slide, "Mouse conditional-fit diagnostic: 10k genes lowers full-panel velocity loss")
         add_image_fit(slide, mouse_full_plot, 0.75, 1.15, 8.4, 4.55)
         full10 = mouse_summary[(mouse_summary["panel"] == 10000) & (mouse_summary["eval_gene_set"] == "full")]
         best = full10.sort_values("mean_loss").iloc[0]
@@ -547,20 +551,20 @@ def create_deck(output: Path) -> None:
         add_text(slide, str(best["model_label"]), 9.55, 2.42, 2.2, 0.28, size=13, bold=True, align=PP_ALIGN.CENTER)
         add_metric(slide, "best 10k MAE", f"{best_mae['mean_mae']:.3f}", 9.45, 3.05, 2.4, 1.0, LIGHT_BLUE)
         add_text(slide, str(best_mae["model_label"]), 9.55, 4.02, 2.2, 0.28, size=13, bold=True, align=PP_ALIGN.CENTER)
-        add_text(slide, "Full-panel losses compare each model on its own selected genes; the legacy-panel slide controls for output genes.", 0.9, 6.25, 11.2, 0.4, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+        add_text(slide, "These OT-path losses use both endpoints and diagnose vector-field fit; they are not causal forecasts.", 0.9, 6.25, 11.2, 0.4, size=12, color=MUTED, align=PP_ALIGN.CENTER)
 
         # 8
         slide = blank_slide(prs)
-        add_title(slide, "Fair legacy-panel scoring shows the 10k cross-attention gain is real")
+        add_title(slide, "Conditional fit on a fixed legacy panel improves for 10k cross-attention")
         add_image_fit(slide, legacy_heatmap, 0.85, 1.2, 8.4, 3.8)
         add_box(slide, "5k models do not improve the 1,984-gene metric", 9.65, 1.5, 2.55, 0.85, fill=LIGHT_RED, line=RED, bold=True)
         add_box(slide, "10k cross-attention improves loss from 84.8 to 80.5", 9.65, 2.75, 2.55, 0.95, fill=LIGHT_GREEN, line=GREEN, bold=True)
         add_box(slide, "10k UCE cross-attention improves further to 78.7", 9.65, 4.2, 2.55, 0.95, fill=LIGHT_GREEN, line=GREEN, bold=True)
-        add_text(slide, "Numbers are held-out MSE on the same original gene panel; lower is better.", 1.0, 6.0, 11.0, 0.4, size=13, color=MUTED, align=PP_ALIGN.CENTER)
+        add_text(slide, "Numbers are OT-path velocity MSE on the same original gene panel; lower is better.", 1.0, 6.0, 11.0, 0.4, size=13, color=MUTED, align=PP_ALIGN.CENTER)
 
         # 9
         slide = blank_slide(prs)
-        add_title(slide, "The best mouse model is 10k UCE cross-attention")
+        add_title(slide, "Legacy UCE improves conditional fit but does not establish forecasting")
         table = mouse_summary[
             (mouse_summary["panel"] == 10000)
             & (mouse_summary["eval_gene_set"] == "full")
@@ -572,7 +576,7 @@ def create_deck(output: Path) -> None:
             MAE=table["mean_mae"].map(lambda x: f"{x:.3f}"),
         )[["Model", "MSE", "MAE"]].sort_values("MSE")
         add_table(slide, table, 0.9, 1.35, 5.4, 2.2, font_size=13)
-        add_box(slide, "UCE helps when the model can use sequence-specific cell context", 7.0, 1.35, 4.7, 0.9, fill=LIGHT_GREEN, line=GREEN, bold=True)
+        add_box(slide, "Legacy UCE interpolated both endpoint embeddings", 7.0, 1.35, 4.7, 0.9, fill=LIGHT_RED, line=RED, bold=True)
         add_box(slide, "Cross-attention can query UCE context differently for each gene's CRE tokens", 7.0, 2.65, 4.7, 1.0, fill=WHITE, line=PURPLE, bold=True)
         add_box(slide, "Expression-state CFM remains a strong baseline, so sequence conditioning must beat a high bar", 7.0, 4.05, 4.7, 1.0, fill=WHITE, line=BLUE, bold=True)
         add_metric(slide, "best full-panel MSE", "20.28", 1.2, 4.65, 2.6, 1.1, LIGHT_GREEN)
@@ -595,7 +599,7 @@ def create_deck(output: Path) -> None:
 
         # 11
         slide = blank_slide(prs)
-        add_title(slide, "Zebrafish transfer is challenging: fine-tuning is best learned model in relative time")
+        add_title(slide, "Zebrafish transfer results are conditional-fit diagnostics pending causal rollout")
         add_image_fit(slide, zfish_plot, 0.85, 1.15, 8.6, 4.45)
         rel = zfish_summary[(zfish_summary["time_scale"] == "relative") & (zfish_summary["eval_gene_set"] == "full")]
         days = zfish_summary[(zfish_summary["time_scale"] == "days") & (zfish_summary["eval_gene_set"] == "full")]
@@ -606,7 +610,7 @@ def create_deck(output: Path) -> None:
 
         # 12
         slide = blank_slide(prs)
-        add_title(slide, "Cross-species generalization depends on the time coordinate and training regime")
+        add_title(slide, "Legacy cross-species conditional fit depends on time coordinate and training regime")
         ztab = zfish_summary[zfish_summary["eval_gene_set"] == "full"].copy()
         ztab = ztab.assign(
             Time=ztab["time_label"],
@@ -624,11 +628,11 @@ def create_deck(output: Path) -> None:
 
         # 13
         slide = blank_slide(prs)
-        add_title(slide, "Current picture: 10k + UCE + cross-attention works in mouse; transfer needs stronger alignment")
+        add_title(slide, "Current picture: 10k improves conditional fit; causal UCE rollout is the required test")
         takeaways = pd.DataFrame(
             [
                 ["Mouse panel size", "10k > 5k", "Cross-attn improves legacy-panel loss at 10k"],
-                ["State representation", "UCE helps STREAM", "Best mouse model is 10k UCE cross-attn"],
+                ["State representation", "Legacy UCE fit improves", "Forecasting claim requires online UCE rollout"],
                 ["Sequence conditioning", "Useful but not automatic", "CFM remains a strong baseline"],
                 ["Cross-species", "Transfer signal appears", "Fine-tuning helps in relative time"],
             ],
@@ -639,7 +643,7 @@ def create_deck(output: Path) -> None:
         add_box(slide, "sequence embedding calibrated for zebrafish", 3.25, 4.6, 2.55, 0.72, fill=WHITE, line=GOLD, size=12, bold=True)
         add_box(slide, "stage-aware or time-conditioned transfer", 6.05, 4.6, 2.55, 0.72, fill=WHITE, line=GREEN, size=12, bold=True)
         add_box(slide, "rollout metrics beyond short displacement", 8.85, 4.6, 2.55, 0.72, fill=WHITE, line=PURPLE, size=12, bold=True)
-        add_text(slide, "Main result: modeling more genes is helpful at 10k, especially when UCE state and cross-attention are combined.", 1.05, 6.2, 11.2, 0.45, size=16, bold=True, align=PP_ALIGN.CENTER)
+        add_text(slide, "Main result: 10k genes improve conditional fit; endpoint transport is now evaluated without destination leakage.", 1.05, 6.2, 11.2, 0.45, size=16, bold=True, align=PP_ALIGN.CENTER)
 
         # 14
         slide = blank_slide(prs)

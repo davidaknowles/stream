@@ -36,15 +36,13 @@ regulatory DNA sequence. The model combines multi-timepoint conditional flow
 matching, minibatch optimal transport between neighboring stages, gene-linked
 candidate cis-regulatory elements, \ag{} sequence embeddings, and optional
 Universal Cell Embedding state representations. The predicted velocity and loss
-are always expression-valued, so \uce{} changes the representation used to
-condition the vector field rather than moving the dynamics into an embedding
-space. In mouse development, expanding the modeled panel from the original
-1,984 genes to 10,000 genes improved held-out timepoint prediction, and the best
-model was 10k-gene \uce{} cross-attention \stream{} with full-panel MSE 20.28
-and MAE 1.594. In zebrafish ZSCAPE transfer, the learned models showed a
-transfer signal, with relative-time fine-tuning outperforming zero-shot and
-zebrafish-only learned models, but cross-species alignment remains an open
-limitation.
+are always expression-valued. In the causal formulation, the frozen \uce{}
+encoder is recomputed from the current expression state, defining the
+autonomous field $dx/dt=f_\theta(E(x),\mathrm{CRE})$. Mouse conditional
+velocity diagnostics improve when the modeled panel expands from 1,984 to
+10,000 genes. We distinguish these path-conditioned diagnostics from genuine
+held-out-stage forecasting, which transports observed source cells without
+using the destination state and scores the resulting endpoint distribution.
 \end{abstract}
 
 \section{Introduction}
@@ -80,7 +78,7 @@ and regulatory sequence inputs.
 \stream{} uses two inputs at each CFM interpolation point: a cell-state vector
 and a fixed set of regulatory tokens for each gene. The cell-state vector is
 either expression on the selected gene panel or a frozen 1,280-dimensional
-\uce{} embedding. The output is always a $G$-dimensional expression velocity,
+\uce{} embedding computed from that expression state. The output is always a $G$-dimensional expression velocity,
 where $G$ is the number of modeled genes (Figure~\ref{fig:model}). Thus the
 dynamics, target velocity, and loss are defined in expression space even when
 \uce{} is used for conditioning.
@@ -95,7 +93,7 @@ dynamics, target velocity, and loss are defined in expression space even when
                 >{\centering\arraybackslash}p{0.22\linewidth}
                 >{\centering\arraybackslash}p{0.18\linewidth}}
 \textbf{expression endpoints} & \textbf{minibatch OT pair} & \textbf{interpolated state} & \textbf{expression velocity} \\
-$x_k,\ x_{k+1}$ & $(x_k,x_{k+1})$ & $x_\tau$ or $u_\tau$ & $(x_{k+1}-x_k)/\Delta t$ \\
+$x_k,\ x_{k+1}$ & $(x_k,x_{k+1})$ & $x_\tau$ or $E(x_\tau)$ & $(x_{k+1}-x_k)/\Delta t$ \\
 \end{tabular}
 
 \vspace{1em}
@@ -124,8 +122,9 @@ The mouse benchmark uses the public single-cell transcriptional time-lapse of
 mouse prenatal development~\cite{qiu2023timelapse}, represented locally as
 11,441,407 cells over 24,552 genes and 43 stages from E8.5 to P0. We held out
 E9.5 and E10.5 as whole timepoints. Training used only adjacent intervals whose
-two endpoints were observed training stages; evaluation used intervals touching
-the held-out stages. The atlas spans major developmental trajectories, and
+two endpoints were observed training stages. Causal evaluation transports cells
+from E9.25 to E9.5 and from E10.25 to E10.5 without observing the destination
+state until scoring. The atlas spans major developmental trajectories, and
 learned vector fields can be visualized as velocity streams on the shared UMAP
 (Figure~\ref{fig:mouse_atlas_velocity}).
 
@@ -145,22 +144,23 @@ learned vector fields can be visualized as velocity streams on the shared UMAP
 \caption*{\textbf{B.} Velocity streams for CFM, FiLM STREAM, and cross-attention STREAM.}
 \end{minipage}
 \caption{\textbf{Mouse developmental data and learned velocity fields.}
-STREAM is trained and evaluated on held-out timepoint prediction, while
+STREAM is trained by conditional flow matching, while causal rollout and
 velocity streams provide qualitative checks on the direction field over the
 atlas manifold.}
 \label{fig:mouse_atlas_velocity}
 \end{figure}
 
-\subsection{Modeling 10k genes improves mouse held-out timepoint prediction}
+\subsection{Modeling 10k genes improves conditional velocity fit}
 
 The original STREAM runs used a 1,984-gene panel. We reran the benchmark with
 5,000 and 10,000 protein-coding highly variable genes and evaluated each model
 on both its full modeled panel and the original 1,984-gene panel. Full-panel
-losses decreased when moving from 5k to 10k genes for all model families
+conditional velocity losses decreased when moving from 5k to 10k genes for all model families
 (Figure~\ref{fig:mouse_results}A). On the 10k full panel, cross-attention
 \stream{} slightly improved over expression-only CFM by MSE (20.86 versus
 21.16), and adding \uce{} lowered cross-attention \stream{} further to 20.28
-MSE and 1.594 MAE.
+MSE and 1.594 MAE. These values evaluate interpolation points constructed from
+both endpoints and are model-fit diagnostics rather than missing-stage forecasts.
 Table~\ref{tab:mouse_best} summarizes the strongest 10k mouse configurations.
 
 The fair legacy-panel comparison asks whether a larger model helps on the same
@@ -183,16 +183,17 @@ panel size and appears at the 10k scale in the current setup.
 \includegraphics[width=\linewidth]{mouse_legacy_panel_heldout.png}
 \caption*{\textbf{B.} Original 1,984-gene panel.}
 \end{minipage}
-\caption{\textbf{Mouse held-out timepoint prediction improves at 10k genes.}
-Bars and heatmap entries report mean held-out MSE across cached OT evaluation
-batches. Lower is better.}
+\caption{\textbf{Mouse conditional velocity fit improves at 10k genes.}
+Bars and heatmap entries report mean velocity MSE on OT paths from intervals
+touching held-out stages. These diagnostics condition on both endpoints. Lower
+is better.}
 \label{fig:mouse_results}
 \end{figure}
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Best 10k mouse full-panel results.} Held-out metrics are
-averaged across intervals touching E9.5 or E10.5.}
+\caption{\textbf{Best 10k mouse conditional-fit results.} Metrics are averaged
+across OT paths in intervals touching E9.5 or E10.5 and are not rollout scores.}
 \label{tab:mouse_best}
 \begin{tabular}{lrr}
 \toprule
@@ -341,22 +342,23 @@ The model is trained by minimizing
 \left\| f_\theta(s_\tau,\{\mathbf{Z}_g\}_{g=1}^{G})-\hat v \right\|_2^2
 \right],
 \end{equation}
-where $s_\tau=x_\tau$ for expression-state runs and $s_\tau=u_\tau$ for
-\uce{}-state runs. Training pairs are sampled from an entropic minibatch
+where $s_\tau=x_\tau$ for expression-state runs and $s_\tau=E(x_\tau)$ for
+online-\uce{} runs. Training pairs are sampled from an entropic minibatch
 optimal transport plan between cells at the two interval endpoints. The OT cost
 is computed in expression space on the selected gene panel.
 
 \subsection{UCE-state conditioning}
 
-For \uce{} runs, a frozen 33-layer \uce{} encoder maps each endpoint cell to
-$E(x)\in\mathbb{R}^{1280}$~\cite{rosen2026uce}. The same OT pair and
-interpolation time are used in both spaces:
+For \uce{} runs, a frozen 33-layer \uce{} encoder maps the current expression
+state to $E(x)\in\mathbb{R}^{1280}$~\cite{rosen2026uce}. After expression-space
+OT pairing and interpolation, the model input is
 \begin{equation}
-u_\tau=(1-\tau)E(x_k)+\tau E(x_{k+1}).
+u_\tau=E\left((1-\tau)x_k+\tau x_{k+1}\right).
 \end{equation}
-The network input state is $u_\tau$, but the target $\hat v$, prediction, and
-loss are expression-valued. Therefore \uce{} is a conditioning representation,
-not the dynamical state space.
+The target $\hat v$, prediction, and loss remain expression-valued. During
+rollout, \uce{} is recomputed after every expression update, yielding the closed
+autonomous system $dx/dt=f_\theta(E(x),\{\mathbf Z_g\})$. No destination
+embedding or explicit time input is supplied.
 
 \subsection{STREAM architecture and baselines}
 
@@ -385,30 +387,30 @@ modules with an MLP from cell state to expression velocity.
 \subsection{Held-out timepoint evaluation}
 
 Mouse models held out E9.5 and E10.5. Zebrafish models held out 36 and 72 hpf.
-All intervals touching a held-out endpoint were excluded from training and
-used for evaluation. Evaluation reuses cached endpoint batches and seeded OT
-sampling. Mouse metrics report velocity MSE and MAE. Zebrafish transfer reports
-expression displacement MSE and MAE, computed after multiplying the velocity
-error by the interval duration; this makes physical-day and relative-time
-coordinates comparable on expression displacement.
+All intervals touching a held-out endpoint were excluded from training.
+Conditional-fit diagnostics reuse seeded OT paths and report velocity or
+expression-displacement error, but are not forecasts because those paths use
+both endpoints. The causal mouse benchmark instead uses only
+observed-to-held-out intervals, repeatedly recomputes $E(x)$ during projected
+Euler integration, and reserves held-out cells for endpoint scoring. It reports
+train-fitted PCA Sinkhorn divergence, skill relative to source-state
+persistence, gene-level mean-shift $R^2$, and mean per-gene Wasserstein distance.
 
 \section{Discussion}
 
-The current results support three working conclusions. First, larger gene
+The current conditional-fit results support the conclusion that larger gene
 panels are useful at 10k genes: the improvement is visible on each model's full
 output panel and persists on the original 1,984-gene panel for cross-attention
-\stream{}. Second, \uce{} helps the sequence-conditioned models more than the
-expression-only CFM baseline, consistent with the idea that a cross-species cell
-state representation is most useful when each gene can query state context
-through its own regulatory tokens. Third, cross-species generalization is not
-solved by swapping annotations alone. Mouse-to-zebrafish transfer depends on
-time scaling and on whether the model is fine-tuned in the target species.
+\stream{}. The earlier cached-\uce{} ablations and mouse-to-zebrafish results
+interpolated endpoint embeddings and therefore measure conditional fit rather
+than causal forecasting. They should not be used to claim held-out-stage or
+cross-species predictive generalization until repeated with online \uce{}.
 
 The main limitations are the simple TSS-window CRE linking rule, the lack of
 zebrafish-specific \ag{} calibration, and the short-interval held-out endpoint
 metric. Future work should test cell-type-aware regulatory links, sequence
-embeddings trained or calibrated for zebrafish, explicit time conditioning, and
-rollout-based evaluation in addition to endpoint displacement.
+embeddings trained or calibrated for zebrafish, and causal rollout evaluation
+across both species.
 
 \begin{thebibliography}{99}
 
