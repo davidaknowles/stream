@@ -51,6 +51,7 @@ def main() -> None:
         default=None,
         help="Optional CSV with a gene_id column. Training loss is restricted to these genes, while OT and state still use the full panel.",
     )
+    parser.add_argument("--cre-token-arrays", default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -97,8 +98,9 @@ def main() -> None:
 
     cre_inputs = None
     cre_dim = None
+    cre_token_path = cfg.resolve_path(args.cre_token_arrays) if args.cre_token_arrays else cfg.out_dir / "cre_token_arrays.npz"
     if cfg.model_variant != "standard_cfm":
-        cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
+        cre_inputs = load_cre_npz(cre_token_path, device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
     state_encoder = (
@@ -148,6 +150,7 @@ def main() -> None:
             "config": cfg.to_dict(),
             "model_contract": "online_uce_autonomous_v1" if state_encoder is not None else "legacy_v1",
             "gene_ids": gene_ids,
+            "cre_token_arrays": str(cre_token_path),
         },
         ckpt_path,
     )

@@ -14,6 +14,8 @@ CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
 HVG_CSV="${HVG_CSV:-}"
 N_HVG="${N_HVG:-}"
 OUT_DIR="${OUT_DIR:-}"
+EMBEDDING_MODE="${EMBEDDING_MODE:-independent}"
+CONTEXT_FLANK_BP="${CONTEXT_FLANK_BP:-100000}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -26,7 +28,7 @@ else
   export PYTHONPATH="$PROJECT_ROOT/src:/gpfs/commons/home/daknowles/projects/alphagenome-pytorch/src:${PYTHONPATH:-}"
 fi
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-args=(--config "$CONFIG" --device cuda)
+args=(--config "$CONFIG" --device cuda --embedding-mode "$EMBEDDING_MODE" --context-flank-bp "$CONTEXT_FLANK_BP")
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi

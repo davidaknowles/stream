@@ -132,16 +132,23 @@ class AlphaGenomeCREEmbedder:
         self.sequence_bp = int(sequence_bp)
 
     @torch.no_grad()
-    def embed_sequences(self, seqs: list[str]) -> np.ndarray:
+    def embed_sequence_bins(self, seqs: list[str]) -> np.ndarray:
+        """Return AlphaGenome 128 bp embeddings without pooling positions."""
+
         if not seqs:
-            return np.zeros((0, 3072), dtype=np.float32)
+            return np.zeros((0, self.sequence_bp // 128, 3072), dtype=np.float32)
         batch = torch.stack([one_hot_dna(_pad_or_trim(seq, self.sequence_bp)) for seq in seqs]).to(self.device)
         emb = self.model.encode(batch, organism_index=self.organism_index, resolutions=(128,))
         x = emb["embeddings_128bp"]
         if x.shape[1] == 3072:
             x = x.transpose(1, 2)
-        pooled = x.mean(dim=1)
-        return pooled.float().cpu().numpy()
+        return x.float().cpu().numpy()
+
+    @torch.no_grad()
+    def embed_sequences(self, seqs: list[str]) -> np.ndarray:
+        if not seqs:
+            return np.zeros((0, 3072), dtype=np.float32)
+        return self.embed_sequence_bins(seqs).mean(axis=1)
 
 
 def _pad_or_trim(seq: str, length: int) -> str:
@@ -155,6 +162,158 @@ def _pad_or_trim(seq: str, length: int) -> str:
     pad = length - len(seq)
     left = pad // 2
     return ("N" * left) + seq + ("N" * (pad - left))
+
+
+def tss_context_window_starts(tss0: int, flank_bp: int, sequence_bp: int) -> tuple[int, int]:
+    """Return two overlapping native windows spanning TSS +/- flank_bp."""
+
+    region_start = int(tss0) - int(flank_bp)
+    region_end = int(tss0) + int(flank_bp)
+    if region_end - region_start <= sequence_bp:
+        start = int(tss0) - sequence_bp // 2
+        return start, start
+    if region_end - region_start > 2 * sequence_bp:
+        raise ValueError("Two AlphaGenome windows cannot span the requested TSS context")
+    return region_start, region_end - sequence_bp
+
+
+def choose_context_window(feature_start: int, feature_end: int, window_starts: tuple[int, int], sequence_bp: int) -> int:
+    """Choose the window that places a feature farthest from input edges."""
+
+    midpoint = 0.5 * (int(feature_start) + int(feature_end))
+    margins = [min(midpoint - start, start + sequence_bp - midpoint) for start in window_starts]
+    if max(margins) < 0:
+        raise ValueError(f"Feature {feature_start}:{feature_end} lies outside TSS context windows")
+    return int(np.argmax(margins))
+
+
+def overlapping_bin_slice(feature_start: int, feature_end: int, window_start: int, resolution: int, n_bins: int) -> slice:
+    """Return 128 bp bins overlapping a half-open genomic feature interval."""
+
+    start = max(0, (int(feature_start) - int(window_start)) // resolution)
+    end = min(n_bins, (int(feature_end) - int(window_start) + resolution - 1) // resolution)
+    if end <= start:
+        midpoint_bin = int((0.5 * (feature_start + feature_end) - window_start) // resolution)
+        start = min(max(midpoint_bin, 0), n_bins - 1)
+        end = start + 1
+    return slice(start, end)
+
+
+def fetch_padded_sequence(fasta: FastaExtractor, chrom: str, start: int, end: int) -> str:
+    """Fetch an exact-width interval, padding sequence beyond chromosome starts."""
+
+    left_pad = max(0, -int(start))
+    sequence = fasta.fetch(chrom, max(0, int(start)), int(end))
+    expected = int(end) - int(start)
+    sequence = ("N" * left_pad) + sequence
+    return sequence[:expected].ljust(expected, "N")
+
+
+def embed_tss_context_tokens(
+    links: pd.DataFrame,
+    fasta_path: str | Path,
+    checkpoint: str | Path,
+    repo: str | Path,
+    batch_size: int,
+    sequence_bp: int,
+    device: str,
+    organism_index: int = 1,
+    flank_bp: int = 100_000,
+    max_tokens: int = 32,
+    cache_dir: str | Path | None = None,
+) -> dict[str, np.ndarray]:
+    """Embed each CRE from shared AlphaGenome windows spanning its gene locus."""
+
+    required = {"gene_id", "gene_name", "chrom", "tss0", "start", "end", "token_rank", "signed_distance", "is_promoter"}
+    missing = required.difference(links.columns)
+    if missing:
+        raise ValueError(f"CRE links lack required columns: {sorted(missing)}")
+    genes = links[["gene_id", "gene_name"]].drop_duplicates("gene_id").reset_index(drop=True)
+    ordered = links.sort_values(["gene_id", "token_rank"])
+    grouped = {gene_id: frame for gene_id, frame in ordered.groupby("gene_id", sort=False)}
+    n_genes = len(genes)
+    cache_path = Path(cache_dir) if cache_dir is not None else None
+    signature_columns = ["gene_id", "ccre_id", "chrom", "tss0", "start", "end", "token_rank"]
+    signature = sha256(ordered[signature_columns].to_csv(index=False).encode()).hexdigest()
+    done = 0
+    if cache_path is None:
+        embeddings = np.zeros((n_genes, max_tokens, 3072), dtype=np.float32)
+    else:
+        cache_path.mkdir(parents=True, exist_ok=True)
+        matrix_path = cache_path / "tss_context_token_embeddings.npy"
+        progress_path = cache_path / "tss_context_embedding_progress.json"
+        progress = _read_embedding_progress(progress_path)
+        valid = progress.get("signature") == signature and matrix_path.exists()
+        if valid:
+            embeddings = np.lib.format.open_memmap(matrix_path, mode="r+")
+            if embeddings.shape != (n_genes, max_tokens, 3072):
+                raise ValueError(f"Unexpected TSS-context cache shape {embeddings.shape}")
+            done = int(progress.get("done", 0))
+        else:
+            embeddings = np.lib.format.open_memmap(
+                matrix_path, mode="w+", dtype=np.float32, shape=(n_genes, max_tokens, 3072)
+            )
+            embeddings[:] = 0
+            embeddings.flush()
+            _write_embedding_progress(progress_path, {"signature": signature, "total": n_genes, "done": 0})
+
+    signed_distance = np.zeros((n_genes, max_tokens), dtype=np.float32)
+    is_promoter = np.zeros((n_genes, max_tokens), dtype=bool)
+    mask = np.zeros((n_genes, max_tokens), dtype=bool)
+    for gene_index, gene_id in enumerate(genes["gene_id"]):
+        for row in grouped[gene_id].itertuples(index=False):
+            rank = int(row.token_rank)
+            if rank < max_tokens:
+                signed_distance[gene_index, rank] = float(row.signed_distance)
+                is_promoter[gene_index, rank] = bool(row.is_promoter)
+                mask[gene_index, rank] = True
+
+    fasta = FastaExtractor(fasta_path)
+    embedder = AlphaGenomeCREEmbedder(checkpoint, repo, device, organism_index, sequence_bp)
+    genes_per_batch = max(1, batch_size // 2)
+    progress_path = cache_path / "tss_context_embedding_progress.json" if cache_path is not None else None
+    for batch_start in range(done, n_genes, genes_per_batch):
+        batch_stop = min(n_genes, batch_start + genes_per_batch)
+        sequences = []
+        windows_by_gene = []
+        for gene_index in range(batch_start, batch_stop):
+            frame = grouped[genes.loc[gene_index, "gene_id"]]
+            first = frame.iloc[0]
+            starts = tss_context_window_starts(int(first.tss0), flank_bp, sequence_bp)
+            windows_by_gene.append(starts)
+            sequences.extend(
+                [fetch_padded_sequence(fasta, str(first.chrom), start, start + sequence_bp) for start in starts]
+            )
+        bin_embeddings = embedder.embed_sequence_bins(sequences)
+        for local_index, gene_index in enumerate(range(batch_start, batch_stop)):
+            frame = grouped[genes.loc[gene_index, "gene_id"]]
+            starts = windows_by_gene[local_index]
+            for row in frame.itertuples(index=False):
+                rank = int(row.token_rank)
+                if rank >= max_tokens:
+                    continue
+                window_index = choose_context_window(row.start, row.end, starts, sequence_bp)
+                bins = overlapping_bin_slice(
+                    row.start, row.end, starts[window_index], 128, bin_embeddings.shape[1]
+                )
+                embeddings[gene_index, rank] = bin_embeddings[2 * local_index + window_index, bins].mean(axis=0)
+        if hasattr(embeddings, "flush"):
+            embeddings.flush()
+        if progress_path is not None:
+            _write_embedding_progress(
+                progress_path, {"signature": signature, "total": n_genes, "done": batch_stop}
+            )
+        if batch_stop % max(genes_per_batch * 25, 1) == 0 or batch_stop == n_genes:
+            print(f"AlphaGenome TSS-context embeddings: {batch_stop:,}/{n_genes:,} genes", flush=True)
+
+    return {
+        "gene_id": genes["gene_id"].to_numpy(dtype=str),
+        "gene_name": genes["gene_name"].to_numpy(dtype=str),
+        "embeddings": np.asarray(embeddings),
+        "signed_distance": signed_distance,
+        "is_promoter": is_promoter,
+        "mask": mask,
+    }
 
 
 def embed_cre_table(

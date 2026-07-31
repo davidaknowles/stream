@@ -70,6 +70,29 @@ def test_matrix_token_packing_matches_embedding_table():
         np.testing.assert_array_equal(actual[key], expected[key])
 
 
+def test_tss_context_windows_cover_flanks_and_choose_internal_context():
+    from stream_model.alphagenome_embed import (
+        choose_context_window,
+        overlapping_bin_slice,
+        tss_context_window_starts,
+    )
+
+    starts = tss_context_window_starts(tss0=1_000_000, flank_bp=100_000, sequence_bp=131_072)
+    assert starts == (900_000, 968_928)
+    assert choose_context_window(905_000, 905_200, starts, 131_072) == 0
+    assert choose_context_window(1_095_000, 1_095_200, starts, 131_072) == 1
+    assert choose_context_window(999_900, 1_000_100, starts, 131_072) == 0
+    bins = overlapping_bin_slice(900_128, 900_384, starts[0], resolution=128, n_bins=1024)
+    assert bins == slice(1, 3)
+
+
+def test_tss_context_windows_reject_regions_too_wide_for_two_inputs():
+    from stream_model.alphagenome_embed import tss_context_window_starts
+
+    with pytest.raises(ValueError, match="cannot span"):
+        tss_context_window_starts(tss0=1_000_000, flank_bp=200_000, sequence_bp=131_072)
+
+
 def test_adjacent_intervals_excludes_heldout_days():
     days = ["E8.5", "E9.0", "E9.5", "E10.0"]
     assert adjacent_intervals(days, {"E9.5"}) == [("E8.5", "E9.0")]

@@ -62,6 +62,7 @@ def main() -> None:
     parser.add_argument("--integration-steps", default="4,8,16")
     parser.add_argument("--pca-cells", type=int, default=10000)
     parser.add_argument("--gene-chunk-size", type=int, default=256)
+    parser.add_argument("--cre-token-arrays", default=None)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -98,7 +99,8 @@ def main() -> None:
         time_coordinates=split.get("time_coordinates"),
     )
 
-    cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
+    cre_token_path = cfg.resolve_path(args.cre_token_arrays) if args.cre_token_arrays else cfg.out_dir / "cre_token_arrays.npz"
+    cre_inputs = load_cre_npz(cre_token_path, device)
     model = build_model(cfg, len(gene_ids), int(cre_inputs["cre_embeddings"].shape[-1])).to(device)
     checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{artifact_stem(cfg)}.pt"
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -106,6 +108,8 @@ def main() -> None:
         raise ValueError("Causal rollout requires an online_uce_autonomous_v1 checkpoint")
     if checkpoint.get("gene_ids") != gene_ids:
         raise ValueError("Checkpoint gene panel does not match selected_genes.csv")
+    if Path(checkpoint.get("cre_token_arrays", cre_token_path)).resolve() != cre_token_path.resolve():
+        raise ValueError("Checkpoint and evaluation CRE token arrays do not match")
     model.load_state_dict(checkpoint["model"])
     model.eval()
     encoder = build_online_uce_encoder(cfg, selected, device)

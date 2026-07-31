@@ -26,6 +26,7 @@ WANDB_MODE="${WANDB_MODE:-}"
 EXPERIMENT_LABEL="${EXPERIMENT_LABEL:-}"
 INIT_CHECKPOINT="${INIT_CHECKPOINT:-}"
 LOSS_GENE_SUBSET="${LOSS_GENE_SUBSET:-}"
+CRE_TOKEN_ARRAYS="${CRE_TOKEN_ARRAYS:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -56,4 +57,5 @@ if [[ -n "$WANDB_MODE" ]]; then args+=(--wandb-mode "$WANDB_MODE"); fi
 if [[ -n "$EXPERIMENT_LABEL" ]]; then args+=(--experiment-label "$EXPERIMENT_LABEL"); fi
 if [[ -n "$INIT_CHECKPOINT" ]]; then args+=(--init-checkpoint "$INIT_CHECKPOINT"); fi
 if [[ -n "$LOSS_GENE_SUBSET" ]]; then args+=(--loss-gene-subset "$LOSS_GENE_SUBSET"); fi
+if [[ -n "$CRE_TOKEN_ARRAYS" ]]; then args+=(--cre-token-arrays "$CRE_TOKEN_ARRAYS"); fi
 "$STREAM_PYTHON" scripts/train_stream.py "${args[@]}"
