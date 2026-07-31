@@ -52,7 +52,12 @@ def artifact_stem(config, variant: str | None = None) -> str:
     """Return a model/metric stem that keeps alternate cell states separate."""
 
     variant = variant or config.model_variant
-    stem = variant if config.cell_state == "expression" else f"{variant}_{config.cell_state}"
+    if config.cell_state == "expression":
+        stem = variant
+    elif getattr(config, "uce_mode", "cached") == "online":
+        stem = f"{variant}_online_uce"
+    else:
+        stem = f"{variant}_{config.cell_state}"
     return f"{stem}_{config.experiment_label}" if getattr(config, "experiment_label", "") else stem
 
 
@@ -156,6 +161,7 @@ def train_steps(
     steps_per_epoch: int = 100,
     wandb_run=None,
     loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
+    state_encoder=None,
 ) -> list[dict[str, float]]:
     device = next(model.parameters()).device
     loss_index_tensor = _loss_gene_index_tensor(loss_gene_indices, device)
@@ -166,7 +172,13 @@ def train_steps(
             batch = sampler.sample()
             x0 = torch.as_tensor(batch.x0, device=device)
             x1 = torch.as_tensor(batch.x1, device=device)
-            if batch.state0 is None:
+            if state_encoder is not None:
+                xt, target, _tau = ot_cfm_batch(
+                    x0, x1, batch.t0, batch.t1, epsilon=config.ot_epsilon, iterations=config.ot_iterations
+                )
+                global_step = epoch * steps_per_epoch + step
+                state_t = state_encoder.encode(xt, seed=int(config.seed) + global_step * config.batch_size)
+            elif batch.state0 is None:
                 xt, target, _tau = ot_cfm_batch(
                     x0, x1, batch.t0, batch.t1, epsilon=config.ot_epsilon, iterations=config.ot_iterations
                 )

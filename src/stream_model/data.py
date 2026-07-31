@@ -64,6 +64,17 @@ def adjacent_intervals(days: list[str], heldout_days: set[str] | None = None) ->
     return [(a, b) for a, b in zip(ordered[:-1], ordered[1:], strict=True) if a not in heldout_days and b not in heldout_days]
 
 
+def incoming_heldout_intervals(days: list[str], heldout_days: set[str]) -> list[tuple[str, str]]:
+    """Return adjacent intervals whose destination, but not source, is held out."""
+
+    ordered = ordered_days(days)
+    return [
+        (a, b)
+        for a, b in zip(ordered[:-1], ordered[1:], strict=True)
+        if a not in heldout_days and b in heldout_days
+    ]
+
+
 @dataclass(frozen=True)
 class IntervalBatch:
     x0: np.ndarray
@@ -153,6 +164,9 @@ class H5adIntervalSampler:
 
     def sample(self) -> IntervalBatch:
         day0, day1 = self.intervals[self.rng.integers(0, len(self.intervals))]
+        return self.sample_interval(day0, day1)
+
+    def sample_interval(self, day0: str, day1: str) -> IntervalBatch:
         day0, day1 = canonical_day_label(day0), canonical_day_label(day1)
         first = self._sample_day(day0)
         second = self._sample_day(day1)
@@ -172,6 +186,11 @@ class H5adIntervalSampler:
             state0=state0,
             state1=state1,
         )
+
+    def sample_day(self, day: str):
+        """Sample one configured-size batch from a specified day."""
+
+        return self._sample_day(canonical_day_label(day))
 
     def _sample_day(self, day: str) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         rows = self.manifest[self.manifest["day"] == day]

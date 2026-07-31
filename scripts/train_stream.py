@@ -12,6 +12,7 @@ import torch
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
 from stream_model.train import artifact_stem, build_model, load_cre_npz, train_steps
+from stream_model.uce import build_online_uce_encoder
 
 
 def _load_gene_subset_indices(gene_ids: list[str], subset_csv: str | None, cfg: StreamConfig) -> list[int] | None:
@@ -41,6 +42,7 @@ def main() -> None:
     parser.add_argument("--gene-chunk-size", type=int, default=None)
     parser.add_argument("--cell-state", choices=["expression", "uce"], default=None)
     parser.add_argument("--uce-embedding-dir", default=None)
+    parser.add_argument("--uce-mode", choices=["cached", "online"], default=None)
     parser.add_argument("--wandb-mode", choices=["online", "offline", "disabled"], default=None)
     parser.add_argument("--experiment-label", default=None)
     parser.add_argument("--init-checkpoint", default=None)
@@ -61,6 +63,7 @@ def main() -> None:
         out_dir=args.out_dir,
         wandb_run_name=args.wandb_run_name,
         cell_state=args.cell_state,
+        uce_mode=args.uce_mode,
         uce_embedding_dir=args.uce_embedding_dir,
         wandb_mode=args.wandb_mode,
         experiment_label=args.experiment_label,
@@ -87,7 +90,7 @@ def main() -> None:
         [tuple(interval) for interval in split["train_intervals"]],
         batch_size=cfg.batch_size,
         seed=cfg.seed,
-        state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" else None,
+        state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" and cfg.uce_mode == "cached" else None,
         state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
         time_coordinates=split.get("time_coordinates"),
     )
@@ -98,6 +101,11 @@ def main() -> None:
         cre_inputs = load_cre_npz(cfg.out_dir / "cre_token_arrays.npz", device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
+    state_encoder = (
+        build_online_uce_encoder(cfg, selected, device)
+        if cfg.cell_state == "uce" and cfg.uce_mode == "online"
+        else None
+    )
     if args.init_checkpoint is not None:
         checkpoint = torch.load(cfg.resolve_path(args.init_checkpoint), map_location=device)
         model.load_state_dict(checkpoint["model"], strict=True)
@@ -127,13 +135,22 @@ def main() -> None:
         steps_per_epoch=args.steps_per_epoch,
         wandb_run=wandb_run,
         loss_gene_indices=loss_gene_indices,
+        state_encoder=state_encoder,
     )
 
     stem = artifact_stem(cfg)
     metrics_path = cfg.out_dir / f"train_metrics_{stem}.csv"
     ckpt_path = cfg.out_dir / f"model_{stem}.pt"
     pd.DataFrame(metrics).to_csv(metrics_path, index=False)
-    torch.save({"model": model.state_dict(), "config": cfg.to_dict()}, ckpt_path)
+    torch.save(
+        {
+            "model": model.state_dict(),
+            "config": cfg.to_dict(),
+            "model_contract": "online_uce_autonomous_v1" if state_encoder is not None else "legacy_v1",
+            "gene_ids": gene_ids,
+        },
+        ckpt_path,
+    )
     if wandb_run is not None:
         wandb_run.summary["final_train_loss"] = float(metrics[-1]["loss"]) if metrics else None
         wandb_run.summary["checkpoint_path"] = str(ckpt_path)

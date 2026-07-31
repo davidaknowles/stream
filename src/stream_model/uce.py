@@ -147,3 +147,94 @@ def embed_uce_sentences(model: torch.nn.Module, sentences: np.ndarray, device: t
         output = model.transformer_encoder(encoded)
         cell_embeddings = nn.functional.normalize(model.decoder(output)[0], dim=1)
     return cell_embeddings.float().cpu().numpy()
+
+
+class OnlineUCEEncoder:
+    """Apply the frozen UCE model to current modeled-panel expression states."""
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        gene_metadata: UCEGeneMetadata,
+        device: torch.device,
+        sample_size: int = 1024,
+    ):
+        self.model = model.eval()
+        self.gene_metadata = gene_metadata
+        self.device = device
+        self.sample_size = int(sample_size)
+
+    def encode(self, expression: torch.Tensor | np.ndarray, seed: int) -> torch.Tensor:
+        values = (
+            expression.detach().float().cpu().numpy()
+            if isinstance(expression, torch.Tensor)
+            else np.asarray(expression, dtype=np.float32)
+        )
+        if values.ndim != 2 or values.shape[1] != len(self.gene_metadata.token_ids):
+            raise ValueError("expression must be cell-by-gene and match UCE gene metadata")
+        buckets: dict[int, list[tuple[int, np.ndarray]]] = {}
+        for row_index, row in enumerate(values):
+            sentence = sample_dense_uce_sentence(
+                row,
+                self.gene_metadata,
+                np.random.default_rng(int(seed) + row_index),
+                sample_size=self.sample_size,
+            )
+            if sentence is None:
+                raise ValueError(f"Cannot encode cell {row_index}: no positive UCE-mapped expression")
+            buckets.setdefault(len(sentence), []).append((row_index, sentence))
+        output = np.empty((len(values), UCE_MODEL_DIM), dtype=np.float32)
+        for entries in buckets.values():
+            indices, sentences = zip(*entries, strict=True)
+            output[np.asarray(indices)] = embed_uce_sentences(self.model, np.stack(sentences), self.device)
+        return torch.as_tensor(output, device=self.device).detach()
+
+
+def sample_dense_uce_sentence(
+    values: np.ndarray,
+    gene_metadata: UCEGeneMetadata,
+    rng: np.random.Generator,
+    sample_size: int = 1024,
+) -> np.ndarray | None:
+    """Create a UCE sentence from a dense, possibly fractional count vector."""
+
+    values = np.asarray(values)
+    columns = np.flatnonzero(gene_metadata.valid & (values > 0))
+    if len(columns) == 0:
+        return None
+    weights = np.log1p(values[columns].astype(np.float64, copy=False))
+    total = weights.sum()
+    if total <= 0:
+        return None
+    chosen = rng.choice(columns, size=sample_size, replace=True, p=weights / total)
+    chroms = gene_metadata.chrom_ids[chosen]
+    sentence = np.empty(1 + sample_size + 2 * len(np.unique(chroms)), dtype=np.int64)
+    sentence[0] = UCE_CLS_TOKEN
+    cursor = 1
+    unique_chroms = np.unique(chroms)
+    rng.shuffle(unique_chroms)
+    for chrom in unique_chroms:
+        sentence[cursor] = UCE_CHROM_TOKEN_OFFSET + int(chrom)
+        cursor += 1
+        on_chrom = chosen[chroms == chrom]
+        ordered = on_chrom[np.argsort(gene_metadata.starts[on_chrom], kind="stable")]
+        count = len(ordered)
+        sentence[cursor : cursor + count] = gene_metadata.token_ids[ordered]
+        cursor += count
+        sentence[cursor] = UCE_CHROM_CLOSE_TOKEN
+        cursor += 1
+    return sentence
+
+
+def build_online_uce_encoder(config, selected_genes: pd.DataFrame, device: torch.device) -> OnlineUCEEncoder:
+    metadata = load_uce_gene_metadata(
+        selected_genes,
+        config.uce_protein_embeddings,
+        config.uce_species_chrom,
+        config.uce_species_offsets,
+        species=config.uce_species,
+    )
+    if not metadata.valid.any():
+        raise ValueError("No selected genes map to UCE tokens")
+    model = load_uce_model(config.uce_dir, config.uce_checkpoint, device)
+    return OnlineUCEEncoder(model, metadata, device, sample_size=config.uce_sample_size)

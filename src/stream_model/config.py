@@ -34,8 +34,18 @@ class StreamConfig:
 
     expression_layer: str | None = None
     cell_state: str = "expression"
+    uce_mode: str = "cached"
     uce_embedding_dir: Path = Path("outputs/uce/embeddings")
     uce_embedding_dim: int = 1280
+    uce_dir: Path = Path("outputs/uce/vendor/UCE")
+    uce_checkpoint: Path = Path("outputs/uce/assets/uce_33layer.torch")
+    uce_protein_embeddings: Path = Path(
+        "outputs/uce/assets/protein_embeddings/Mus_musculus.GRCm39.gene_symbol_to_embedding_ESM2.pt"
+    )
+    uce_species_chrom: Path = Path("outputs/uce/assets/species_chrom.csv")
+    uce_species_offsets: Path = Path("outputs/uce/assets/species_offsets.pkl")
+    uce_species: str = "mouse"
+    uce_sample_size: int = 1024
     batch_size: int = 64
     gene_chunk_size: int = 512
     ot_epsilon: float = 0.05
@@ -85,6 +95,11 @@ class StreamConfig:
             "out_dir",
             "alphagenome_repo",
             "uce_embedding_dir",
+            "uce_dir",
+            "uce_checkpoint",
+            "uce_protein_embeddings",
+            "uce_species_chrom",
+            "uce_species_offsets",
         ):
             value = getattr(cfg, name)
             setattr(cfg, name, cfg.resolve_path(value))
@@ -116,6 +131,7 @@ def apply_config_overrides(
     out_dir: str | Path | None = None,
     wandb_run_name: str | None = None,
     cell_state: str | None = None,
+    uce_mode: str | None = None,
     uce_embedding_dir: str | Path | None = None,
     wandb_mode: str | None = None,
     experiment_label: str | None = None,
@@ -134,6 +150,10 @@ def apply_config_overrides(
         if cell_state not in {"expression", "uce"}:
             raise ValueError("cell_state must be expression or uce")
         cfg.cell_state = cell_state
+    if uce_mode is not None:
+        if uce_mode not in {"cached", "online"}:
+            raise ValueError("uce_mode must be cached or online")
+        cfg.uce_mode = uce_mode
     if uce_embedding_dir is not None:
         cfg.uce_embedding_dir = cfg.resolve_path(uce_embedding_dir)
     if wandb_mode is not None:

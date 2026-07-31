@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label
+from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label, incoming_heldout_intervals
 from stream_model.genome import build_token_arrays, build_token_arrays_from_matrix, link_cres_to_genes, parse_gtf_tss
 
 
@@ -73,6 +73,7 @@ def test_matrix_token_packing_matches_embedding_table():
 def test_adjacent_intervals_excludes_heldout_days():
     days = ["E8.5", "E9.0", "E9.5", "E10.0"]
     assert adjacent_intervals(days, {"E9.5"}) == [("E8.5", "E9.0")]
+    assert incoming_heldout_intervals(days, {"E9.5"}) == [("E9.0", "E9.5")]
 
 
 def test_time_coordinates_support_physical_days_and_relative_scaling():
@@ -240,6 +241,56 @@ def test_uce_sentence_uses_chromosome_delimiters_and_sorted_positions():
     assert sentence[0] == UCE_CLS_TOKEN
     assert np.count_nonzero(sentence == UCE_CHROM_CLOSE_TOKEN) == 2
     assert set(sentence[1:]) >= {UCE_CHROM_TOKEN_OFFSET, UCE_CHROM_TOKEN_OFFSET + 1, 10, 11, 12}
+
+
+def test_dense_uce_sentence_accepts_fractional_counts_and_is_reproducible():
+    from stream_model.uce import UCEGeneMetadata, sample_dense_uce_sentence
+
+    metadata = UCEGeneMetadata(
+        token_ids=np.array([10, 11, 12]),
+        chrom_ids=np.array([0, 0, 1]),
+        starts=np.array([30, 10, 20]),
+    )
+    values = np.array([0.25, 3.5, 1.25], dtype=np.float32)
+    first = sample_dense_uce_sentence(values, metadata, np.random.default_rng(7), sample_size=16)
+    second = sample_dense_uce_sentence(values, metadata, np.random.default_rng(7), sample_size=16)
+    np.testing.assert_array_equal(first, second)
+    assert first is not None
+    assert len(first) >= 17
+
+
+def test_projected_euler_rollout_is_autonomous_and_nonnegative():
+    torch = pytest.importorskip("torch")
+    from stream_model.rollout import projected_euler_rollout
+
+    seen_seeds = []
+
+    def velocity(x, seed):
+        seen_seeds.append(seed)
+        return torch.tensor([[-2.0, 1.0]], dtype=x.dtype)
+
+    result = projected_euler_rollout(
+        torch.tensor([[0.5, 0.0]]),
+        0.0,
+        1.0,
+        velocity,
+        steps=2,
+        seed=19,
+    )
+    assert torch.allclose(result, torch.tensor([[0.0, 1.0]]))
+    assert seen_seeds == [19, 19]
+
+
+def test_endpoint_metrics_are_exact_for_identical_predictions():
+    from stream_model.rollout import mean_shift_metrics, sinkhorn_divergence
+
+    x0 = np.array([[0.0, 1.0], [1.0, 0.0]])
+    x1 = np.array([[1.0, 3.0], [2.0, 2.0]])
+    metrics = mean_shift_metrics(x0, x1, x1)
+    assert metrics["mean_shift_r2"] == pytest.approx(1.0)
+    assert metrics["mean_shift_mae"] == pytest.approx(0.0)
+    assert metrics["mean_gene_wasserstein1"] == pytest.approx(0.0)
+    assert sinkhorn_divergence(x1, x1, epsilon=0.1) == pytest.approx(0.0, abs=1e-8)
 
 
 def test_evaluate_intervals_reports_full_and_subset_gene_sets():
