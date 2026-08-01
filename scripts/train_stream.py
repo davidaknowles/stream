@@ -81,6 +81,7 @@ def main() -> None:
     parser.add_argument("--endpoint-denoising", choices=["none", "pca", "knn", "metacell"], default=None)
     parser.add_argument("--denoising-neighbors", type=int, default=None)
     parser.add_argument("--denoising-metacells", type=int, default=None)
+    parser.add_argument("--uce-expression-preprocessing", choices=["raw", "pca"], default=None)
     parser.add_argument("--pca-artifact", default=None)
     parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
     parser.add_argument("--device", default=None)
@@ -127,6 +128,8 @@ def main() -> None:
         cfg.denoising_neighbors = args.denoising_neighbors
     if args.denoising_metacells is not None:
         cfg.denoising_metacells = args.denoising_metacells
+    if args.uce_expression_preprocessing is not None:
+        cfg.uce_expression_preprocessing = args.uce_expression_preprocessing
     if args.pca_artifact is not None:
         cfg.pca_artifact = cfg.resolve_path(args.pca_artifact)
     if args.max_interval_skip is not None:
@@ -137,6 +140,11 @@ def main() -> None:
         parser.error("--denoising-neighbors must be positive")
     if cfg.denoising_metacells <= 0:
         parser.error("--denoising-metacells must be positive")
+    if cfg.uce_expression_preprocessing == "pca":
+        if cfg.pca_artifact is None:
+            parser.error("PCA preprocessing before UCE requires --pca-artifact")
+        if cfg.cell_state != "uce" or cfg.uce_mode != "online":
+            parser.error("PCA preprocessing before UCE requires online UCE")
     if cfg.endpoint_denoising != "none" and cfg.ot_pair_bank_mode != "interval":
         parser.error("Endpoint denoising requires --ot-pair-bank-mode interval")
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
@@ -250,6 +258,7 @@ def main() -> None:
         "endpoint_denoising": cfg.endpoint_denoising,
         "denoising_neighbors": cfg.denoising_neighbors,
         "denoising_metacells": cfg.denoising_metacells,
+        "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
         "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         "max_interval_skip": cfg.max_interval_skip,
         "n_train_intervals": len(train_intervals),

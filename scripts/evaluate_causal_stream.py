@@ -14,8 +14,15 @@ from sklearn.decomposition import PCA
 
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler, incoming_heldout_intervals
+from stream_model.denoise import PCADenoiser
 from stream_model.rollout import mean_shift_metrics, projected_euler_rollout, sinkhorn_divergence
-from stream_model.train import artifact_stem, build_model, load_cre_npz, predict_stream_chunked
+from stream_model.train import (
+    artifact_stem,
+    build_model,
+    load_cre_npz,
+    predict_stream_chunked,
+    uce_input_expression,
+)
 from stream_model.uce import build_online_uce_encoder
 
 
@@ -110,6 +117,14 @@ def main() -> None:
         raise ValueError("Checkpoint gene panel does not match selected_genes.csv")
     if Path(checkpoint.get("cre_token_arrays", cre_token_path)).resolve() != cre_token_path.resolve():
         raise ValueError("Checkpoint and evaluation CRE token arrays do not match")
+    checkpoint_config = checkpoint.get("config", {})
+    cfg.uce_expression_preprocessing = checkpoint_config.get("uce_expression_preprocessing", "raw")
+    uce_pca = None
+    if cfg.uce_expression_preprocessing == "pca":
+        pca_artifact = checkpoint.get("pca_artifact")
+        if not pca_artifact:
+            raise ValueError("Checkpoint requests PCA preprocessing before UCE but has no PCA artifact")
+        uce_pca = PCADenoiser.load(cfg.resolve_path(pca_artifact))
     model.load_state_dict(checkpoint["model"])
     model.eval()
     encoder = build_online_uce_encoder(cfg, selected, device)
@@ -137,7 +152,7 @@ def main() -> None:
         persistence_sinkhorn = sinkhorn_divergence(source_pca, observed_pca, sinkhorn_epsilon)
 
         def velocity_fn(current_x, seed):
-            state = encoder.encode(current_x, seed)
+            state = encoder.encode(uce_input_expression(cfg, current_x, uce_pca), seed)
             return predict_stream_chunked(model, state, cre_inputs, cfg.gene_chunk_size)
 
         for steps in [int(value) for value in args.integration_steps.split(",")]:
@@ -153,6 +168,7 @@ def main() -> None:
                     "integration_steps": steps,
                     "eval_gene_set": name,
                     "n_eval_genes": len(gene_ids) if indices is None else len(indices),
+                    "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
                     **mean_shift_metrics(source, observed_x1, predicted_np, indices),
                     "endpoint_sinkhorn": endpoint_sinkhorn if indices is None else np.nan,
                     "persistence_sinkhorn": persistence_sinkhorn if indices is None else np.nan,

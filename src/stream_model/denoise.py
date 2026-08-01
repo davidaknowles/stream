@@ -44,6 +44,24 @@ class PCADenoiser:
         count_scale = library_size / self.target_sum
         return np.asarray(np.expm1(reconstructed) * count_scale[:, None], dtype=np.float32)
 
+    def reconstruct_tensor(self, counts):
+        """Apply the same reconstruction to a torch count tensor on its current device."""
+
+        import torch
+
+        library_size = counts.sum(dim=1)
+        scale = torch.where(
+            library_size > 0,
+            counts.new_tensor(self.target_sum) / library_size,
+            torch.zeros_like(library_size),
+        )
+        normalized = torch.log1p(counts * scale[:, None])
+        components = torch.as_tensor(self.components, device=counts.device, dtype=counts.dtype)
+        mean = torch.as_tensor(self.mean, device=counts.device, dtype=counts.dtype)
+        coordinates = (normalized - mean) @ components.T
+        reconstructed = torch.clamp(coordinates @ components + mean, min=0.0, max=20.0)
+        return torch.expm1(reconstructed) * (library_size / self.target_sum)[:, None]
+
     def save(self, path: str | Path, metadata: dict[str, object] | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

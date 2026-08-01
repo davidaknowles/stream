@@ -60,6 +60,7 @@ class StreamConfig:
     endpoint_denoising: str = "none"
     denoising_neighbors: int = 15
     denoising_metacells: int = 512
+    uce_expression_preprocessing: str = "raw"
     pca_artifact: Path | None = None
     pca_components: int = 100
     pca_fit_cells: int = 10_000

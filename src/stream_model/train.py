@@ -36,6 +36,19 @@ class FixedValidationBatch:
     x1: torch.Tensor
 
 
+def uce_input_expression(config, expression: torch.Tensor, pca=None) -> torch.Tensor:
+    """Return the autonomous expression-derived input to the frozen UCE encoder."""
+
+    preprocessing = getattr(config, "uce_expression_preprocessing", "raw")
+    if preprocessing == "raw":
+        return expression
+    if preprocessing == "pca":
+        if pca is None:
+            raise ValueError("PCA preprocessing before UCE requires a fitted PCA artifact")
+        return pca.reconstruct_tensor(expression)
+    raise ValueError("uce_expression_preprocessing must be raw or pca")
+
+
 @dataclass(frozen=True)
 class TrainingResult:
     train_metrics: list[dict[str, float]]
@@ -271,7 +284,9 @@ def build_fixed_validation_batches(
             else:
                 target = _raw_target
             if state_encoder is not None:
-                state_t = state_encoder.encode(xt, seed=batch_seed)
+                state_t = state_encoder.encode(
+                    uce_input_expression(config, xt, pca), seed=batch_seed
+                )
             elif sampled.state0 is None:
                 state_t = xt
             else:
@@ -369,6 +384,7 @@ def evaluate_observed_rollouts(
     state_encoder,
     steps: int,
     loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
+    pca=None,
 ) -> dict[str, float]:
     """Diagnose autonomous endpoint prediction on observed validation intervals."""
 
@@ -382,7 +398,11 @@ def evaluate_observed_rollouts(
         x0 = batch.x0.to(device)
 
         def velocity_fn(current_x, seed):
-            state = state_encoder.encode(current_x, seed) if state_encoder is not None else current_x
+            state = (
+                state_encoder.encode(uce_input_expression(config, current_x, pca), seed)
+                if state_encoder is not None
+                else current_x
+            )
             return _predict_loss_genes(model, state, cre_inputs, config.gene_chunk_size, None)
 
         predicted = projected_euler_rollout(
@@ -509,7 +529,10 @@ def train_steps(
                 )
                 pool_cursor = end
             if state_encoder is not None:
-                state_t = state_encoder.encode(xt, seed=int(config.seed) + global_step * config.batch_size)
+                state_t = state_encoder.encode(
+                    uce_input_expression(config, xt, pca),
+                    seed=int(config.seed) + global_step * config.batch_size,
+                )
             elif paired_state0 is None:
                 state_t = xt
             else:
@@ -609,6 +632,7 @@ def train_steps(
                     state_encoder,
                     validation_rollout_steps,
                     loss_gene_indices,
+                    pca,
                 )
             )
         validation_metrics.append(row)

@@ -362,6 +362,30 @@ def test_pca_reconstruction_is_nonnegative_and_gene_valued():
     assert (reconstructed >= 0).all()
 
 
+def test_pca_tensor_reconstruction_matches_numpy_for_uce_input():
+    torch = pytest.importorskip("torch")
+    from stream_model.denoise import PCADenoiser
+    from stream_model.train import uce_input_expression
+
+    pca = PCADenoiser(
+        components=np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        mean=np.asarray([0.5, 0.5, 0.5], dtype=np.float32),
+        explained_variance=np.ones(2, dtype=np.float32),
+    )
+    counts = torch.tensor([[10.0, 2.0, 0.0], [0.0, 4.0, 8.0]])
+
+    class RawConfig:
+        uce_expression_preprocessing = "raw"
+
+    class PCAConfig:
+        uce_expression_preprocessing = "pca"
+
+    assert uce_input_expression(RawConfig(), counts, pca) is counts
+    reconstructed = uce_input_expression(PCAConfig(), counts, pca)
+    expected = torch.as_tensor(pca.reconstruct_counts(counts.numpy()))
+    assert torch.allclose(reconstructed, expected, rtol=1e-5, atol=1e-5)
+
+
 def test_knn_smoothing_uses_local_profiles_and_preserves_library_size():
     from stream_model.denoise import knn_smooth_selected_counts
 
