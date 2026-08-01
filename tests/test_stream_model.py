@@ -164,6 +164,19 @@ def test_ot_and_cfm_shapes():
     assert tau.shape == (4, 1)
 
 
+def test_coupling_pair_sampling_is_reproducible_and_respects_support():
+    torch = pytest.importorskip("torch")
+    from stream_model.ot import sample_coupling_pairs
+
+    coupling = torch.tensor([[0.0, 1.0, 0.0], [2.0, 0.0, 3.0]])
+    first = sample_coupling_pairs(coupling, 100, torch.Generator().manual_seed(23))
+    second = sample_coupling_pairs(coupling, 100, torch.Generator().manual_seed(23))
+
+    assert torch.equal(first[0], second[0])
+    assert torch.equal(first[1], second[1])
+    assert torch.all(coupling[first] > 0)
+
+
 def test_ot_pool_can_emit_smaller_reproducible_pair_minibatch():
     torch = pytest.importorskip("torch")
     from stream_model.ot import ot_cfm_batch

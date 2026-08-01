@@ -9,7 +9,7 @@ out_dir="${OUT_DIR:-outputs/stream_hvg10000}"
 pca_artifact="${PCA_ARTIFACT:-${out_dir}/pca_denoiser_100pc.npz}"
 pca_job="${PCA_JOB:-}"
 pool_size="${OT_POOL_SIZE:?Set OT_POOL_SIZE from the completed pool benchmark}"
-pairs_per_pool="${OT_PAIRS_PER_POOL:-256}"
+pairs_per_pool="${OT_PAIRS_PER_POOL:-1024}"
 gpu_type="${GPU_TYPE:-b6k}"
 cd "$project_root"
 

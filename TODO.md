@@ -1,10 +1,10 @@
 # TODO
 
-## Improve OT Pair Reuse Without Losing Interval Diversity
+## Improve OT Pair Reuse Without Losing Interval Diversity (Implemented)
 
 - Replace the single sequential pair queue with an interval-stratified pair bank.
 - Construct a large OT plan independently for every training interval.
-- Sample 256-1,024 endpoint pairs from each plan and store paired expression endpoints on CPU.
+- Sample 1,024 endpoint pairs from each production plan and store paired expression endpoints on CPU.
 - Shuffle model microbatches across intervals instead of exhausting one interval before moving to the next.
 - Refresh an interval's OT plan after its pair bank is exhausted.
 - Keep the model/UCE microbatch small while allowing large OT endpoint pools.

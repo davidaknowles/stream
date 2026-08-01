@@ -165,11 +165,31 @@ def coupling_diagnostics(cost: torch.Tensor, coupling: torch.Tensor) -> dict[str
     }
 
 
-def sample_coupling_pairs(coupling: torch.Tensor, n_pairs: int, generator: torch.Generator | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-    flat = coupling.reshape(-1)
-    flat = flat / flat.sum()
-    idx = torch.multinomial(flat, n_pairs, replacement=True, generator=generator)
-    return idx // coupling.shape[1], idx % coupling.shape[1]
+def sample_coupling_pairs(
+    coupling: torch.Tensor,
+    n_pairs: int,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample coupling edges without flattening the potentially large plan."""
+
+    if coupling.ndim != 2:
+        raise ValueError("coupling must be a matrix")
+    if n_pairs <= 0:
+        raise ValueError("n_pairs must be positive")
+    row_mass = coupling.sum(dim=1)
+    if not torch.isfinite(row_mass).all() or row_mass.sum() <= 0:
+        raise ValueError("coupling must have positive finite mass")
+    rows = torch.multinomial(row_mass, n_pairs, replacement=True, generator=generator)
+    columns = torch.empty_like(rows)
+    for row in torch.unique(rows):
+        positions = torch.nonzero(rows == row, as_tuple=False).squeeze(1)
+        columns[positions] = torch.multinomial(
+            coupling[row],
+            positions.numel(),
+            replacement=True,
+            generator=generator,
+        )
+    return rows, columns
 
 
 def sample_transport_indices(
