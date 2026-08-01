@@ -399,6 +399,51 @@ def test_interval_pair_bank_interleaves_intervals_before_repeating():
     assert sampler.calls == {interval: 1 for interval in sampler.intervals}
 
 
+def test_pair_bank_keeps_raw_state_separate_from_pca_denoised_targets():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.pair_bank import IntervalPairBank
+
+    class Config:
+        seed = 9
+        batch_size = 2
+        ot_pairs_per_pool = 2
+        ot_method = "balanced"
+        ot_epsilon = 0.1
+        ot_iterations = 20
+        ot_partial_mass = 0.95
+        ot_marginal_relaxation = 0.1
+        ot_cost_space = "pca"
+        endpoint_denoising = "pca"
+
+    class PCA:
+        def transform_counts(self, values):
+            return np.asarray(values[:, :2], dtype=np.float32)
+
+        def reconstruct_counts(self, values):
+            return np.asarray(values + 10.0, dtype=np.float32)
+
+    class Sampler:
+        intervals = [("0", "1")]
+
+        def sample_interval(self, day0, day1):
+            return IntervalBatch(
+                x0=np.zeros((4, 3), dtype=np.float32),
+                x1=np.ones((4, 3), dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0=day0,
+                day1=day1,
+            )
+
+    batch = IntervalPairBank(Config(), Sampler(), torch.device("cpu"), pca=PCA()).next()
+
+    assert torch.all(batch.raw_x0 == 0)
+    assert torch.all(batch.raw_x1 == 1)
+    assert torch.all(batch.target_x0 == 10)
+    assert torch.all(batch.target_x1 == 11)
+
+
 def test_train_steps_stops_after_validation_patience():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch
