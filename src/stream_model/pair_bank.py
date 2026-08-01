@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from .denoise import denoise_selected_counts
 from .ot import coupling_diagnostics, coupling_kwargs, sample_coupling_pairs, transport_plan
 
 
@@ -104,16 +105,35 @@ class IntervalPairBank:
         selected_raw0 = raw_x0[i0_np]
         selected_raw1 = raw_x1[i1_np]
         endpoint_denoising = getattr(self.config, "endpoint_denoising", "none")
-        if endpoint_denoising == "pca":
+        if endpoint_denoising in {"pca", "knn", "metacell"}:
             if self.pca is None:
-                raise ValueError("PCA endpoint denoising requires a fitted PCA artifact")
-            target_x0 = self.pca.reconstruct_counts(selected_raw0)
-            target_x1 = self.pca.reconstruct_counts(selected_raw1)
+                raise ValueError("Endpoint denoising requires a fitted PCA artifact")
+            denoising_kwargs = {
+                "n_neighbors": int(getattr(self.config, "denoising_neighbors", 15)),
+                "n_metacells": int(getattr(self.config, "denoising_metacells", 512)),
+                "device": self.device,
+            }
+            target_x0 = denoise_selected_counts(
+                endpoint_denoising,
+                raw_x0,
+                i0_np,
+                self.pca,
+                seed=int(self.config.seed) + interval_index * 2 + refresh * 10_007,
+                **denoising_kwargs,
+            )
+            target_x1 = denoise_selected_counts(
+                endpoint_denoising,
+                raw_x1,
+                i1_np,
+                self.pca,
+                seed=int(self.config.seed) + interval_index * 2 + 1 + refresh * 10_007,
+                **denoising_kwargs,
+            )
         elif endpoint_denoising == "none":
             target_x0 = selected_raw0
             target_x1 = selected_raw1
         else:
-            raise ValueError("endpoint_denoising must be none or pca")
+            raise ValueError("endpoint_denoising must be none, pca, knn, or metacell")
         state0 = None if batch.state0 is None else np.asarray(batch.state0, dtype=np.float32)[i0_np]
         state1 = None if batch.state1 is None else np.asarray(batch.state1, dtype=np.float32)[i1_np]
         self.refresh_counts[interval] += 1

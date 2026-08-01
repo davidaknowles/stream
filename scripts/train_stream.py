@@ -78,7 +78,9 @@ def main() -> None:
     parser.add_argument("--ot-pairs-per-pool", type=int, default=None)
     parser.add_argument("--ot-pair-bank-mode", choices=["sequential", "interval"], default=None)
     parser.add_argument("--ot-cost-space", choices=["expression", "pca"], default=None)
-    parser.add_argument("--endpoint-denoising", choices=["none", "pca"], default=None)
+    parser.add_argument("--endpoint-denoising", choices=["none", "pca", "knn", "metacell"], default=None)
+    parser.add_argument("--denoising-neighbors", type=int, default=None)
+    parser.add_argument("--denoising-metacells", type=int, default=None)
     parser.add_argument("--pca-artifact", default=None)
     parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
     parser.add_argument("--device", default=None)
@@ -121,12 +123,20 @@ def main() -> None:
         cfg.ot_cost_space = args.ot_cost_space
     if args.endpoint_denoising is not None:
         cfg.endpoint_denoising = args.endpoint_denoising
+    if args.denoising_neighbors is not None:
+        cfg.denoising_neighbors = args.denoising_neighbors
+    if args.denoising_metacells is not None:
+        cfg.denoising_metacells = args.denoising_metacells
     if args.pca_artifact is not None:
         cfg.pca_artifact = cfg.resolve_path(args.pca_artifact)
     if args.max_interval_skip is not None:
         cfg.max_interval_skip = args.max_interval_skip
-    if (cfg.ot_cost_space == "pca" or cfg.endpoint_denoising == "pca") and cfg.pca_artifact is None:
+    if (cfg.ot_cost_space == "pca" or cfg.endpoint_denoising != "none") and cfg.pca_artifact is None:
         parser.error("PCA coupling or denoising requires --pca-artifact")
+    if cfg.denoising_neighbors <= 0:
+        parser.error("--denoising-neighbors must be positive")
+    if cfg.denoising_metacells <= 0:
+        parser.error("--denoising-metacells must be positive")
     if cfg.endpoint_denoising != "none" and cfg.ot_pair_bank_mode != "interval":
         parser.error("Endpoint denoising requires --ot-pair-bank-mode interval")
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
@@ -238,6 +248,8 @@ def main() -> None:
         "ot_pair_bank_mode": cfg.ot_pair_bank_mode,
         "ot_cost_space": cfg.ot_cost_space,
         "endpoint_denoising": cfg.endpoint_denoising,
+        "denoising_neighbors": cfg.denoising_neighbors,
+        "denoising_metacells": cfg.denoising_metacells,
         "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         "max_interval_skip": cfg.max_interval_skip,
         "n_train_intervals": len(train_intervals),

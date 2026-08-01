@@ -68,6 +68,147 @@ class PCADenoiser:
         )
 
 
+def _counts_from_log_expression(
+    log_expression: np.ndarray,
+    library_size: np.ndarray,
+    target_sum: float,
+) -> np.ndarray:
+    del target_sum
+    expression = np.expm1(np.clip(log_expression, 0.0, 20.0))
+    profile_sum = expression.sum(axis=1, dtype=np.float64).astype(np.float32)
+    count_scale = np.divide(
+        np.asarray(library_size, dtype=np.float32),
+        profile_sum,
+        out=np.zeros_like(profile_sum),
+        where=profile_sum > 0,
+    )
+    return np.asarray(expression * count_scale[:, None], dtype=np.float32)
+
+
+def knn_smooth_selected_counts(
+    counts: np.ndarray,
+    coordinates: np.ndarray,
+    selected_indices: np.ndarray,
+    n_neighbors: int = 15,
+    target_sum: float = 10_000.0,
+    device: str = "cpu",
+    query_chunk_size: int = 64,
+) -> np.ndarray:
+    """Smooth selected cells over same-stage PCA neighbors while preserving library size."""
+
+    import torch
+
+    counts = np.asarray(counts, dtype=np.float32)
+    coordinates = np.asarray(coordinates, dtype=np.float32)
+    selected_indices = np.asarray(selected_indices, dtype=np.int64)
+    if len(counts) != len(coordinates):
+        raise ValueError("counts and coordinates must have the same number of cells")
+    invalid_indices = len(selected_indices) and (
+        selected_indices.min() < 0 or selected_indices.max() >= len(counts)
+    )
+    if selected_indices.ndim != 1 or invalid_indices:
+        raise ValueError("selected_indices must index rows of counts")
+    k = min(int(n_neighbors), len(counts))
+    if k <= 0:
+        raise ValueError("n_neighbors must be positive")
+    unique_indices, inverse = np.unique(selected_indices, return_inverse=True)
+    coordinate_tensor = torch.as_tensor(coordinates, device=device)
+    neighbors = []
+    with torch.no_grad():
+        for start in range(0, len(unique_indices), query_chunk_size):
+            query_indices = unique_indices[start : start + query_chunk_size]
+            queries = coordinate_tensor[torch.as_tensor(query_indices, device=device)]
+            distances = torch.cdist(queries, coordinate_tensor)
+            neighbors.append(torch.topk(distances, k=k, largest=False).indices.cpu().numpy())
+    neighbor_indices = np.vstack(neighbors) if neighbors else np.empty((0, k), dtype=np.int64)
+    normalized, library_size = log_normalize_counts(counts, target_sum)
+    smoothed_unique = np.empty((len(unique_indices), counts.shape[1]), dtype=np.float32)
+    for start in range(0, len(unique_indices), query_chunk_size):
+        stop = min(start + query_chunk_size, len(unique_indices))
+        smoothed_unique[start:stop] = normalized[neighbor_indices[start:stop]].mean(axis=1)
+    selected_library_size = library_size[unique_indices]
+    return _counts_from_log_expression(smoothed_unique, selected_library_size, target_sum)[inverse]
+
+
+def metacell_smooth_selected_counts(
+    counts: np.ndarray,
+    coordinates: np.ndarray,
+    selected_indices: np.ndarray,
+    n_metacells: int = 512,
+    target_sum: float = 10_000.0,
+    seed: int = 0,
+) -> np.ndarray:
+    """Map selected cells to same-stage PCA metacell centroids, preserving library size."""
+
+    from sklearn.cluster import MiniBatchKMeans
+
+    counts = np.asarray(counts, dtype=np.float32)
+    coordinates = np.asarray(coordinates, dtype=np.float32)
+    selected_indices = np.asarray(selected_indices, dtype=np.int64)
+    if len(counts) != len(coordinates):
+        raise ValueError("counts and coordinates must have the same number of cells")
+    invalid_indices = len(selected_indices) and (
+        selected_indices.min() < 0 or selected_indices.max() >= len(counts)
+    )
+    if selected_indices.ndim != 1 or invalid_indices:
+        raise ValueError("selected_indices must index rows of counts")
+    clusters = min(int(n_metacells), len(counts))
+    if clusters <= 0:
+        raise ValueError("n_metacells must be positive")
+    labels = MiniBatchKMeans(
+        n_clusters=clusters,
+        batch_size=min(2048, len(counts)),
+        n_init=1,
+        max_iter=100,
+        random_state=seed,
+    ).fit_predict(coordinates)
+    normalized, library_size = log_normalize_counts(counts, target_sum)
+    selected_labels = labels[selected_indices]
+    unique_labels, inverse = np.unique(selected_labels, return_inverse=True)
+    centroids = np.empty((len(unique_labels), counts.shape[1]), dtype=np.float32)
+    for index, label in enumerate(unique_labels):
+        centroids[index] = normalized[labels == label].mean(axis=0)
+    return _counts_from_log_expression(centroids[inverse], library_size[selected_indices], target_sum)
+
+
+def denoise_selected_counts(
+    method: str,
+    counts: np.ndarray,
+    selected_indices: np.ndarray,
+    pca: PCADenoiser,
+    *,
+    n_neighbors: int = 15,
+    n_metacells: int = 512,
+    seed: int = 0,
+    device: str = "cpu",
+) -> np.ndarray:
+    """Apply a configured train-fitted endpoint denoiser to selected stage cells."""
+
+    selected_indices = np.asarray(selected_indices, dtype=np.int64)
+    if method == "pca":
+        return pca.reconstruct_counts(np.asarray(counts)[selected_indices])
+    coordinates = pca.transform_counts(counts, whiten=False)
+    if method == "knn":
+        return knn_smooth_selected_counts(
+            counts,
+            coordinates,
+            selected_indices,
+            n_neighbors=n_neighbors,
+            target_sum=pca.target_sum,
+            device=device,
+        )
+    if method == "metacell":
+        return metacell_smooth_selected_counts(
+            counts,
+            coordinates,
+            selected_indices,
+            n_metacells=n_metacells,
+            target_sum=pca.target_sum,
+            seed=seed,
+        )
+    raise ValueError("method must be pca, knn, or metacell")
+
+
 def fit_pca_denoiser(
     sampler,
     train_days: list[str],

@@ -362,6 +362,42 @@ def test_pca_reconstruction_is_nonnegative_and_gene_valued():
     assert (reconstructed >= 0).all()
 
 
+def test_knn_smoothing_uses_local_profiles_and_preserves_library_size():
+    from stream_model.denoise import knn_smooth_selected_counts
+
+    counts = np.asarray(
+        [[10.0, 0.0, 0.0], [8.0, 2.0, 0.0], [0.0, 0.0, 10.0], [0.0, 2.0, 8.0]],
+        dtype=np.float32,
+    )
+    coordinates = np.asarray([[0.0, 0.0], [0.1, 0.0], [10.0, 0.0], [10.1, 0.0]], dtype=np.float32)
+    selected = np.asarray([0, 1, 2, 3, 0])
+    smoothed = knn_smooth_selected_counts(counts, coordinates, selected, n_neighbors=2)
+
+    assert np.allclose(smoothed[0], smoothed[1])
+    assert np.allclose(smoothed[2], smoothed[3])
+    assert np.allclose(smoothed[0], smoothed[4])
+    assert np.allclose(smoothed.sum(axis=1), counts[selected].sum(axis=1))
+
+
+def test_metacell_smoothing_maps_clusters_to_shared_profiles():
+    from stream_model.denoise import metacell_smooth_selected_counts
+
+    counts = np.asarray(
+        [[10.0, 0.0, 0.0], [8.0, 2.0, 0.0], [0.0, 0.0, 10.0], [0.0, 2.0, 8.0]],
+        dtype=np.float32,
+    )
+    coordinates = np.asarray([[0.0, 0.0], [0.1, 0.0], [10.0, 0.0], [10.1, 0.0]], dtype=np.float32)
+    selected = np.arange(4)
+    smoothed = metacell_smooth_selected_counts(
+        counts, coordinates, selected, n_metacells=2, seed=5
+    )
+
+    assert np.allclose(smoothed[0], smoothed[1])
+    assert np.allclose(smoothed[2], smoothed[3])
+    assert not np.allclose(smoothed[0], smoothed[2])
+    assert np.allclose(smoothed.sum(axis=1), counts.sum(axis=1))
+
+
 def test_interval_pair_bank_interleaves_intervals_before_repeating():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch

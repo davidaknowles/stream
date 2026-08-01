@@ -58,6 +58,8 @@ class StreamConfig:
     ot_pair_bank_mode: str = "sequential"
     ot_cost_space: str = "expression"
     endpoint_denoising: str = "none"
+    denoising_neighbors: int = 15
+    denoising_metacells: int = 512
     pca_artifact: Path | None = None
     pca_components: int = 100
     pca_fit_cells: int = 10_000

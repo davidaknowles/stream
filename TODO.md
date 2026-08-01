@@ -12,15 +12,15 @@
 - Record plan diagnostics by interval: transported mass, pair cost, effective edges, maximum edge mass, and marginal imbalance.
 - Compare pair-bank size and refresh frequency while holding the number of optimizer examples fixed.
 
-## Denoise Expression Before Fitting Dynamics
+## Denoise Expression Before Fitting Dynamics (Ablations Running)
 
 Most CFM applications fit dynamics in a lower-dimensional or denoised state space. Determine whether sparse count noise is overwhelming the developmental velocity signal.
 
-- **PCA coupling cost:** compute OT in train-fitted log-normalized PCA space while retaining expression-space interpolation, targets, and gene-level outputs. Test this first because it changes pairing without changing the STREAM output contract.
-- **PCA endpoint denoising:** reconstruct log-normalized expression from a train-fitted truncated PCA model, then form gene-space interpolation and velocity targets from those smoothed endpoints. Keep STREAM outputs gene-valued so gene-specific CRE conditioning is unchanged.
+- **PCA coupling cost:** implemented using train-fitted log-normalized PCA coordinates while retaining expression-space interpolation and gene-level outputs.
+- **PCA endpoint denoising:** implemented by reconstructing selected gene-space velocity targets from the train-fitted PCA model.
 - Do not fit dynamics or predict velocities directly in PC space. PC outputs do not have a natural gene-specific CRE representation and would change the STREAM model contract.
-- **Meta-cells:** aggregate cells within timepoint and local state neighborhoods before OT/CFM. Preserve rare populations and avoid combining distinct lineages.
-- **KNN smoothing:** smooth expression within each timepoint using neighbors defined from training-only PCA coordinates. Never use held-out-stage cells or cross-time neighbors during preprocessing.
+- **Meta-cells:** implemented as within-timepoint PCA clusters whose log-normalized expression centroids replace selected endpoint targets while retaining each cell's library size.
+- **KNN smoothing:** implemented using within-timepoint neighbors from train-fitted PCA coordinates; held-out-stage and cross-time neighbors are never used.
 - Compare raw counts, PCA-cost-only OT, meta-cells, and KNN-smoothed endpoints using the same held-out blocks and persistence baseline.
 - Report whether denoising improves observed-interval validation, not only held-out endpoint metrics.
 

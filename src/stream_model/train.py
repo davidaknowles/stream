@@ -9,6 +9,7 @@ from typing import Callable
 import numpy as np
 import torch
 
+from .denoise import denoise_selected_counts
 from .models import StandardCFM, StreamModel, mse_cfm_loss
 from .ot import (
     cfm_interpolate,
@@ -233,11 +234,37 @@ def build_fixed_validation_batches(
             xt, _raw_target, tau = cfm_interpolate(
                 paired_x0, paired_x1, sampled.t0, sampled.t1, generator=generator
             )
-            if getattr(config, "endpoint_denoising", "none") == "pca":
+            endpoint_denoising = getattr(config, "endpoint_denoising", "none")
+            if endpoint_denoising in {"pca", "knn", "metacell"}:
                 if pca is None:
-                    raise ValueError("PCA endpoint denoising requires a fitted PCA artifact")
-                target_x0 = torch.as_tensor(pca.reconstruct_counts(sampled.x0[i0.cpu().numpy()]), device=device)
-                target_x1 = torch.as_tensor(pca.reconstruct_counts(sampled.x1[i1.cpu().numpy()]), device=device)
+                    raise ValueError("Endpoint denoising requires a fitted PCA artifact")
+                denoising_kwargs = {
+                    "n_neighbors": int(getattr(config, "denoising_neighbors", 15)),
+                    "n_metacells": int(getattr(config, "denoising_metacells", 512)),
+                    "device": device,
+                }
+                target_x0 = torch.as_tensor(
+                    denoise_selected_counts(
+                        endpoint_denoising,
+                        sampled.x0,
+                        i0.cpu().numpy(),
+                        pca,
+                        seed=batch_seed * 2,
+                        **denoising_kwargs,
+                    ),
+                    device=device,
+                )
+                target_x1 = torch.as_tensor(
+                    denoise_selected_counts(
+                        endpoint_denoising,
+                        sampled.x1,
+                        i1.cpu().numpy(),
+                        pca,
+                        seed=batch_seed * 2 + 1,
+                        **denoising_kwargs,
+                    ),
+                    device=device,
+                )
                 _target_xt, target, _target_tau = cfm_interpolate(
                     target_x0, target_x1, sampled.t0, sampled.t1, tau=tau
                 )
