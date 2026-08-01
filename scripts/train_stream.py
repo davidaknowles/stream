@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 
+import numpy as np
 import pandas as pd
 import torch
 
@@ -169,6 +170,10 @@ def main() -> None:
     if cfg.model_variant != "standard_cfm":
         cre_inputs = load_cre_npz(cre_token_path, device)
         cre_dim = int(cre_inputs["cre_embeddings"].shape[-1])
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
     model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
     state_encoder = (
         build_online_uce_encoder(cfg, selected, device)
