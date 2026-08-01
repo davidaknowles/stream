@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-08-01
+
+- Both validation-selected reruns and their causal evaluations completed. Independent CRE stopped after 2,300 steps and selected step 1,100 (normalized validation EMA 1.00369); TSS-context stopped after 1,300 steps and selected step 100 (0.99978). Normalized validation MSE remained approximately 1.0, the zero-velocity reference value, and mean observed-interval rollout R-squared remained negative at every diagnostic check. Training longer therefore did not establish useful autonomous dynamics even on observed intervals.
+- At 16 causal steps, independent-CRE Sinkhorn skill was 0.00577 into E9.5 and 0.00283 into E10.5, with mean-shift R-squared -0.0293 and -0.0330. TSS-context skill was 0.00488 and 0.00150, with R-squared -0.0467 and -0.0354. Both are effectively persistence-level; TSS-context again provides no improvement over independent CRE. Euler results were numerically unchanged at 4, 8, and 16 steps.
+
 ## 2026-07-31
 
 - Replaced fixed-budget-only CFM fitting with validation-based checkpoint selection and early stopping. Ten percent of cells are held out independently within every observed training stage; fixed OT pairs and UCE encodings from those cells define an interval-balanced validation set. Selection uses an EMA of per-gene velocity-RMS-normalized CFM MSE, with a 0.5% minimum relative improvement and 12-check patience. Raw validation MSE and four-step autonomous mean-shift R-squared/MAE/Wasserstein diagnostics on observed intervals are logged separately. Held-out stages remain inaccessible during training and model selection. Best checkpoints now include optimizer state and stopping metadata for exact continuation.
