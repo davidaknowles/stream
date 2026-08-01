@@ -169,6 +169,9 @@ def main() -> None:
                     "eval_gene_set": name,
                     "n_eval_genes": len(gene_ids) if indices is None else len(indices),
                     "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
+                    "uce_rollout_expression_preprocessing": (
+                        "pca" if cfg.uce_expression_preprocessing == "pca" else "raw"
+                    ),
                     **mean_shift_metrics(source, observed_x1, predicted_np, indices),
                     "endpoint_sinkhorn": endpoint_sinkhorn if indices is None else np.nan,
                     "persistence_sinkhorn": persistence_sinkhorn if indices is None else np.nan,

@@ -380,10 +380,16 @@ def test_pca_tensor_reconstruction_matches_numpy_for_uce_input():
     class PCAConfig:
         uce_expression_preprocessing = "pca"
 
+    class DenoisedConfig:
+        uce_expression_preprocessing = "denoised"
+
     assert uce_input_expression(RawConfig(), counts, pca) is counts
     reconstructed = uce_input_expression(PCAConfig(), counts, pca)
     expected = torch.as_tensor(pca.reconstruct_counts(counts.numpy()))
     assert torch.allclose(reconstructed, expected, rtol=1e-5, atol=1e-5)
+    smoothed = counts + 3.0
+    assert uce_input_expression(DenoisedConfig(), counts, pca, smoothed) is smoothed
+    assert uce_input_expression(DenoisedConfig(), counts, pca) is counts
 
 
 def test_knn_smoothing_uses_local_profiles_and_preserves_library_size():

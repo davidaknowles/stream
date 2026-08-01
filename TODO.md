@@ -21,7 +21,7 @@ Most CFM applications fit dynamics in a lower-dimensional or denoised state spac
 - Do not fit dynamics or predict velocities directly in PC space. PC outputs do not have a natural gene-specific CRE representation and would change the STREAM model contract.
 - **Meta-cells:** implemented as within-timepoint PCA clusters whose log-normalized expression centroids replace selected endpoint targets while retaining each cell's library size.
 - **KNN smoothing:** implemented using within-timepoint neighbors from train-fitted PCA coordinates; held-out-stage and cross-time neighbors are never used.
-- **Smoothed UCE input:** implemented an autonomous PCA preprocessing arm evaluating `UCE(D(x))` at every training interpolation and Euler rollout step. KNN/metacell UCE preprocessing is excluded because it would require a timepoint-specific reference population during rollout.
+- **Smoothed UCE input:** implemented an autonomous PCA preprocessing arm evaluating `UCE(D(x))` at every training interpolation and Euler rollout step. Also test KNN/metacell-smoothed UCE input during fitting and fixed validation, reverting explicitly to raw expression during rollout because no timepoint-specific reference population is available.
 - Compare raw counts, PCA-cost-only OT, meta-cells, and KNN-smoothed endpoints using the same held-out blocks and persistence baseline.
 - Report whether denoising improves observed-interval validation, not only held-out endpoint metrics.
 

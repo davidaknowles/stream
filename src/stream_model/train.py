@@ -36,7 +36,12 @@ class FixedValidationBatch:
     x1: torch.Tensor
 
 
-def uce_input_expression(config, expression: torch.Tensor, pca=None) -> torch.Tensor:
+def uce_input_expression(
+    config,
+    expression: torch.Tensor,
+    pca=None,
+    denoised_expression: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Return the autonomous expression-derived input to the frozen UCE encoder."""
 
     preprocessing = getattr(config, "uce_expression_preprocessing", "raw")
@@ -46,7 +51,9 @@ def uce_input_expression(config, expression: torch.Tensor, pca=None) -> torch.Te
         if pca is None:
             raise ValueError("PCA preprocessing before UCE requires a fitted PCA artifact")
         return pca.reconstruct_tensor(expression)
-    raise ValueError("uce_expression_preprocessing must be raw or pca")
+    if preprocessing == "denoised":
+        return expression if denoised_expression is None else denoised_expression
+    raise ValueError("uce_expression_preprocessing must be raw, pca, or denoised")
 
 
 @dataclass(frozen=True)
@@ -248,6 +255,7 @@ def build_fixed_validation_batches(
                 paired_x0, paired_x1, sampled.t0, sampled.t1, generator=generator
             )
             endpoint_denoising = getattr(config, "endpoint_denoising", "none")
+            denoised_xt = None
             if endpoint_denoising in {"pca", "knn", "metacell"}:
                 if pca is None:
                     raise ValueError("Endpoint denoising requires a fitted PCA artifact")
@@ -278,14 +286,14 @@ def build_fixed_validation_batches(
                     ),
                     device=device,
                 )
-                _target_xt, target, _target_tau = cfm_interpolate(
+                denoised_xt, target, _target_tau = cfm_interpolate(
                     target_x0, target_x1, sampled.t0, sampled.t1, tau=tau
                 )
             else:
                 target = _raw_target
             if state_encoder is not None:
                 state_t = state_encoder.encode(
-                    uce_input_expression(config, xt, pca), seed=batch_seed
+                    uce_input_expression(config, xt, pca, denoised_xt), seed=batch_seed
                 )
             elif sampled.state0 is None:
                 state_t = xt
@@ -469,12 +477,13 @@ def train_steps(
         model.train()
         for step in range(steps_per_epoch):
             global_step = epoch * steps_per_epoch + step
+            denoised_xt = None
             if pair_bank is not None:
                 microbatch = pair_bank.next()
                 x0 = microbatch.raw_x0
                 x1 = microbatch.raw_x1
                 xt, _raw_target, tau = cfm_interpolate(x0, x1, microbatch.t0, microbatch.t1)
-                _target_xt, target, _target_tau = cfm_interpolate(
+                denoised_xt, target, _target_tau = cfm_interpolate(
                     microbatch.target_x0,
                     microbatch.target_x1,
                     microbatch.t0,
@@ -530,7 +539,7 @@ def train_steps(
                 pool_cursor = end
             if state_encoder is not None:
                 state_t = state_encoder.encode(
-                    uce_input_expression(config, xt, pca),
+                    uce_input_expression(config, xt, pca, denoised_xt),
                     seed=int(config.seed) + global_step * config.batch_size,
                 )
             elif paired_state0 is None:

@@ -81,7 +81,9 @@ def main() -> None:
     parser.add_argument("--endpoint-denoising", choices=["none", "pca", "knn", "metacell"], default=None)
     parser.add_argument("--denoising-neighbors", type=int, default=None)
     parser.add_argument("--denoising-metacells", type=int, default=None)
-    parser.add_argument("--uce-expression-preprocessing", choices=["raw", "pca"], default=None)
+    parser.add_argument(
+        "--uce-expression-preprocessing", choices=["raw", "pca", "denoised"], default=None
+    )
     parser.add_argument("--pca-artifact", default=None)
     parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
     parser.add_argument("--device", default=None)
@@ -145,6 +147,11 @@ def main() -> None:
             parser.error("PCA preprocessing before UCE requires --pca-artifact")
         if cfg.cell_state != "uce" or cfg.uce_mode != "online":
             parser.error("PCA preprocessing before UCE requires online UCE")
+    if cfg.uce_expression_preprocessing == "denoised":
+        if cfg.endpoint_denoising == "none":
+            parser.error("Denoised UCE input requires endpoint denoising")
+        if cfg.cell_state != "uce" or cfg.uce_mode != "online":
+            parser.error("Denoised UCE input requires online UCE")
     if cfg.endpoint_denoising != "none" and cfg.ot_pair_bank_mode != "interval":
         parser.error("Endpoint denoising requires --ot-pair-bank-mode interval")
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
