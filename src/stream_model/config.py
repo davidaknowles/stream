@@ -50,6 +50,11 @@ class StreamConfig:
     gene_chunk_size: int = 512
     ot_epsilon: float = 0.05
     ot_iterations: int = 80
+    ot_method: str = "balanced"
+    ot_partial_mass: float = 0.95
+    ot_marginal_relaxation: float = 0.1
+    ot_pool_size: int = 0
+    ot_pairs_per_pool: int = 0
     learning_rate: float = 1e-4
     epochs: int = 10
     heldout_days: list[str] = field(default_factory=lambda: ["E9.5", "E10.5"])

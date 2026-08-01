@@ -68,6 +68,11 @@ def main() -> None:
     parser.add_argument("--validation-ema-alpha", type=float, default=0.3)
     parser.add_argument("--rollout-every-validations", type=int, default=5)
     parser.add_argument("--validation-rollout-steps", type=int, default=4)
+    parser.add_argument("--ot-method", choices=["balanced", "partial", "unbalanced"], default=None)
+    parser.add_argument("--ot-partial-mass", type=float, default=None)
+    parser.add_argument("--ot-marginal-relaxation", type=float, default=None)
+    parser.add_argument("--ot-pool-size", type=int, default=None)
+    parser.add_argument("--ot-pairs-per-pool", type=int, default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -92,6 +97,16 @@ def main() -> None:
         cfg.gene_chunk_size = args.gene_chunk_size
     if args.epochs is not None:
         cfg.epochs = args.epochs
+    if args.ot_method is not None:
+        cfg.ot_method = args.ot_method
+    if args.ot_partial_mass is not None:
+        cfg.ot_partial_mass = args.ot_partial_mass
+    if args.ot_marginal_relaxation is not None:
+        cfg.ot_marginal_relaxation = args.ot_marginal_relaxation
+    if args.ot_pool_size is not None:
+        cfg.ot_pool_size = args.ot_pool_size
+    if args.ot_pairs_per_pool is not None:
+        cfg.ot_pairs_per_pool = args.ot_pairs_per_pool
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +121,7 @@ def main() -> None:
         cells,
         gene_ids,
         [tuple(interval) for interval in split["train_intervals"]],
-        batch_size=cfg.batch_size,
+        batch_size=cfg.ot_pool_size if cfg.ot_pool_size > 0 else cfg.batch_size,
         seed=cfg.seed,
         state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" and cfg.uce_mode == "cached" else None,
         state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
@@ -158,7 +173,7 @@ def main() -> None:
             mode=cfg.wandb_mode,
             name=run_name,
             config=cfg.to_dict(),
-            tags=["stream", cfg.model_variant, cfg.cell_state, cfg.dataset_name, cfg.time_coordinate],
+            tags=["stream", cfg.model_variant, cfg.cell_state, cfg.dataset_name, cfg.time_coordinate, cfg.ot_method],
         )
         if loss_gene_indices is not None:
             wandb_run.config["loss_gene_subset"] = args.loss_gene_subset
@@ -178,6 +193,11 @@ def main() -> None:
         "rollout_steps": args.validation_rollout_steps,
         "n_train_cells": len(sampler.manifest),
         "n_validation_cells": 0 if validation_sampler is None else len(validation_sampler.manifest),
+        "ot_method": cfg.ot_method,
+        "ot_partial_mass": cfg.ot_partial_mass,
+        "ot_marginal_relaxation": cfg.ot_marginal_relaxation,
+        "ot_pool_size": cfg.ot_pool_size if cfg.ot_pool_size > 0 else cfg.batch_size,
+        "ot_pairs_per_pool": cfg.ot_pairs_per_pool if cfg.ot_pairs_per_pool > 0 else cfg.batch_size,
     }
 
     def save_best_checkpoint(current_model, current_optimizer, validation_row, train_rows, validation_rows):

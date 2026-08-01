@@ -148,6 +148,48 @@ def test_ot_and_cfm_shapes():
     assert tau.shape == (4, 1)
 
 
+def test_ot_pool_can_emit_smaller_reproducible_pair_minibatch():
+    torch = pytest.importorskip("torch")
+    from stream_model.ot import ot_cfm_batch
+
+    x0 = torch.arange(24, dtype=torch.float32).reshape(8, 3)
+    x1 = x0.flip(0)
+    first = ot_cfm_batch(
+        x0, x1, 0.0, 1.0, n_pairs=3, generator=torch.Generator().manual_seed(17)
+    )
+    second = ot_cfm_batch(
+        x0, x1, 0.0, 1.0, n_pairs=3, generator=torch.Generator().manual_seed(17)
+    )
+
+    assert first[0].shape == first[1].shape == (3, 3)
+    for left, right in zip(first, second, strict=True):
+        assert torch.equal(left, right)
+
+
+def test_partial_ot_transports_requested_mass_and_drops_expensive_match():
+    torch = pytest.importorskip("torch")
+    from stream_model.ot import partial_sinkhorn_coupling
+
+    cost = torch.tensor([[0.0, 2.0], [2.0, 2.0]])
+    coupling = partial_sinkhorn_coupling(cost, transported_mass=0.5, epsilon=0.05, iterations=500)
+
+    assert float(coupling.sum()) == pytest.approx(0.5, abs=2e-3)
+    assert float(coupling[0, 0] / coupling.sum()) > 0.99
+
+
+def test_kl_unbalanced_ot_relaxes_marginals_around_expensive_cells():
+    torch = pytest.importorskip("torch")
+    from stream_model.ot import unbalanced_sinkhorn_coupling
+
+    cost = torch.tensor([[0.0, 2.0], [2.0, 2.0]])
+    coupling = unbalanced_sinkhorn_coupling(cost, marginal_relaxation=0.1, epsilon=0.05, iterations=500)
+
+    assert torch.isfinite(coupling).all()
+    assert float(coupling.sum()) > 0
+    assert float(coupling[0, 0] / coupling.sum()) > 0.99
+    assert not torch.allclose(coupling.sum(1), torch.full((2,), 0.5), atol=0.05)
+
+
 def test_ot_cfm_interpolates_auxiliary_state_with_expression_pairs():
     torch = pytest.importorskip("torch")
     from stream_model.ot import ot_cfm_batch_with_state
@@ -334,6 +376,61 @@ def test_train_steps_stops_after_validation_patience():
     assert result.best_epoch == 0
     assert len(result.train_metrics) == 3
     assert len(result.validation_metrics) == 3
+
+
+def test_train_steps_reuses_large_ot_pool_across_model_minibatches():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.train import train_steps
+
+    class Config:
+        epochs = 1
+        seed = 5
+        batch_size = 2
+        ot_epsilon = 0.1
+        ot_iterations = 10
+        ot_method = "balanced"
+        ot_partial_mass = 0.95
+        ot_marginal_relaxation = 0.1
+        ot_pairs_per_pool = 4
+        gene_chunk_size = 2
+        model_variant = "standard_cfm"
+        cell_state = "expression"
+
+    class Sampler:
+        calls = 0
+
+        def sample(self):
+            self.calls += 1
+            return IntervalBatch(
+                x0=np.zeros((6, 2), dtype=np.float32),
+                x1=np.ones((6, 2), dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0="0",
+                day1="1",
+            )
+
+    class ConstantModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.value = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, x):
+            return torch.zeros_like(x) + self.value
+
+    sampler = Sampler()
+    model = ConstantModel()
+    result = train_steps(
+        Config(),
+        sampler,
+        model,
+        torch.optim.SGD(model.parameters(), lr=0.0),
+        steps_per_epoch=4,
+    )
+
+    assert sampler.calls == 2
+    assert [row["ot_pool_refill"] for row in result.train_metrics] == [0, 0, 1, 1]
 
 
 @pytest.mark.parametrize("variant", ["film", "cross_attention"])

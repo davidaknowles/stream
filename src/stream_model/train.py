@@ -10,7 +10,14 @@ import numpy as np
 import torch
 
 from .models import StandardCFM, StreamModel, mse_cfm_loss
-from .ot import ot_cfm_batch, ot_cfm_batch_with_state
+from .ot import (
+    cfm_interpolate,
+    coupling_diagnostics,
+    coupling_kwargs,
+    sample_coupling_pairs,
+    sample_transport_indices,
+    transport_plan,
+)
 from .rollout import mean_shift_metrics, projected_euler_rollout
 
 
@@ -201,41 +208,26 @@ def build_fixed_validation_batches(
             x1 = torch.as_tensor(sampled.x1, device=device)
             batch_seed = base_seed + interval_index * 10_000 + batch_index
             generator = torch.Generator(device=device).manual_seed(batch_seed)
+            i0, i1 = sample_transport_indices(
+                x0,
+                x1,
+                n_pairs=int(config.batch_size),
+                generator=generator,
+                **coupling_kwargs(config),
+            )
+            paired_x0 = x0[i0]
+            paired_x1 = x1[i1]
+            xt, target, tau = cfm_interpolate(
+                paired_x0, paired_x1, sampled.t0, sampled.t1, generator=generator
+            )
             if state_encoder is not None:
-                xt, target, _tau = ot_cfm_batch(
-                    x0,
-                    x1,
-                    sampled.t0,
-                    sampled.t1,
-                    epsilon=config.ot_epsilon,
-                    iterations=config.ot_iterations,
-                    generator=generator,
-                )
                 state_t = state_encoder.encode(xt, seed=batch_seed)
             elif sampled.state0 is None:
-                state_t, target, _tau = ot_cfm_batch(
-                    x0,
-                    x1,
-                    sampled.t0,
-                    sampled.t1,
-                    epsilon=config.ot_epsilon,
-                    iterations=config.ot_iterations,
-                    generator=generator,
-                )
+                state_t = xt
             else:
                 state0 = torch.as_tensor(sampled.state0, device=device)
                 state1 = torch.as_tensor(sampled.state1, device=device)
-                _xt, target, _tau, state_t = ot_cfm_batch_with_state(
-                    x0,
-                    x1,
-                    state0,
-                    state1,
-                    sampled.t0,
-                    sampled.t1,
-                    epsilon=config.ot_epsilon,
-                    iterations=config.ot_iterations,
-                    generator=generator,
-                )
+                state_t = (1.0 - tau) * state0[i0] + tau * state1[i1]
             batches.append(
                 FixedValidationBatch(
                     day0=day0,
@@ -244,8 +236,8 @@ def build_fixed_validation_batches(
                     t1=sampled.t1,
                     state_t=state_t.detach().cpu(),
                     target=target.detach().cpu(),
-                    x0=x0.detach().cpu(),
-                    x1=x1.detach().cpu(),
+                    x0=paired_x0.detach().cpu(),
+                    x1=paired_x1.detach().cpu(),
                 )
             )
     return batches
@@ -393,36 +385,52 @@ def train_steps(
     checks_without_improvement = 0
     validation_checks = 0
     stopped_early = False
+    paired_pool = None
+    pool_cursor = 0
+    pool_refills = 0
+    pairs_per_pool = max(int(config.batch_size), int(getattr(config, "ot_pairs_per_pool", 0)))
     for epoch in range(config.epochs):
         model.train()
         for step in range(steps_per_epoch):
-            batch = sampler.sample()
-            x0 = torch.as_tensor(batch.x0, device=device)
-            x1 = torch.as_tensor(batch.x1, device=device)
+            global_step = epoch * steps_per_epoch + step
+            if paired_pool is None or pool_cursor + config.batch_size > pairs_per_pool:
+                batch = sampler.sample()
+                x0_pool = torch.as_tensor(batch.x0, device=device)
+                x1_pool = torch.as_tensor(batch.x1, device=device)
+                generator = torch.Generator(device=device).manual_seed(int(config.seed) + pool_refills * 100_003)
+                cost, coupling = transport_plan(x0_pool, x1_pool, **coupling_kwargs(config))
+                i0, i1 = sample_coupling_pairs(coupling, pairs_per_pool, generator=generator)
+                paired_pool = {
+                    "x0": x0_pool[i0],
+                    "x1": x1_pool[i1],
+                    "state0": None,
+                    "state1": None,
+                    "t0": batch.t0,
+                    "t1": batch.t1,
+                    "day0": batch.day0,
+                    "day1": batch.day1,
+                    "diagnostics": coupling_diagnostics(cost, coupling),
+                }
+                if batch.state0 is not None:
+                    state0_pool = torch.as_tensor(batch.state0, device=device)
+                    state1_pool = torch.as_tensor(batch.state1, device=device)
+                    paired_pool["state0"] = state0_pool[i0]
+                    paired_pool["state1"] = state1_pool[i1]
+                pool_cursor = 0
+                pool_refills += 1
+            end = pool_cursor + config.batch_size
+            x0 = paired_pool["x0"][pool_cursor:end]
+            x1 = paired_pool["x1"][pool_cursor:end]
+            xt, target, tau = cfm_interpolate(x0, x1, paired_pool["t0"], paired_pool["t1"])
             if state_encoder is not None:
-                xt, target, _tau = ot_cfm_batch(
-                    x0, x1, batch.t0, batch.t1, epsilon=config.ot_epsilon, iterations=config.ot_iterations
-                )
-                global_step = epoch * steps_per_epoch + step
                 state_t = state_encoder.encode(xt, seed=int(config.seed) + global_step * config.batch_size)
-            elif batch.state0 is None:
-                xt, target, _tau = ot_cfm_batch(
-                    x0, x1, batch.t0, batch.t1, epsilon=config.ot_epsilon, iterations=config.ot_iterations
-                )
+            elif paired_pool["state0"] is None:
                 state_t = xt
             else:
-                state0 = torch.as_tensor(batch.state0, device=device)
-                state1 = torch.as_tensor(batch.state1, device=device)
-                xt, target, _tau, state_t = ot_cfm_batch_with_state(
-                    x0,
-                    x1,
-                    state0,
-                    state1,
-                    batch.t0,
-                    batch.t1,
-                    epsilon=config.ot_epsilon,
-                    iterations=config.ot_iterations,
-                )
+                state0 = paired_pool["state0"][pool_cursor:end]
+                state1 = paired_pool["state1"][pool_cursor:end]
+                state_t = (1.0 - tau) * state0 + tau * state1
+            pool_cursor = end
             optimizer.zero_grad(set_to_none=True)
             if cre_inputs is None:
                 pred = model(state_t)
@@ -444,10 +452,17 @@ def train_steps(
                     loss_gene_indices=loss_index_tensor,
                 )
             optimizer.step()
-            row = {"epoch": epoch, "step": step, "loss": value}
+            row = {
+                "epoch": epoch,
+                "step": step,
+                "loss": value,
+                "day0": paired_pool["day0"],
+                "day1": paired_pool["day1"],
+                "ot_pool_refill": pool_refills - 1,
+                **paired_pool["diagnostics"],
+            }
             metrics.append(row)
             if wandb_run is not None:
-                global_step = epoch * steps_per_epoch + step
                 wandb_run.log(
                     {
                         "train/loss": value,

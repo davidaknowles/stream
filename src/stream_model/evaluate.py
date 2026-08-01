@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 
 from .models import mse_cfm_loss
-from .ot import ot_cfm_batch, ot_cfm_batch_with_state
+from .ot import coupling_kwargs, ot_cfm_batch, ot_cfm_batch_with_state
 from .train import predict_stream_chunked
 
 
@@ -53,7 +53,7 @@ def evaluate_intervals(
         generator = torch.Generator(device=device).manual_seed(int(getattr(config, "seed", 1337)) + batch_index)
         if batch.state0 is None:
             xt, target, _tau = ot_cfm_batch(
-                x0, x1, batch.t0, batch.t1, epsilon=config.ot_epsilon, iterations=config.ot_iterations, generator=generator
+                x0, x1, batch.t0, batch.t1, generator=generator, **coupling_kwargs(config)
             )
             state_t = xt
         else:
@@ -66,9 +66,8 @@ def evaluate_intervals(
                 state1,
                 batch.t0,
                 batch.t1,
-                epsilon=config.ot_epsilon,
-                iterations=config.ot_iterations,
                 generator=generator,
+                **coupling_kwargs(config),
             )
         pred = (
             model(state_t)
