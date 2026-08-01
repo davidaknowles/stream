@@ -17,7 +17,8 @@
 Most CFM applications fit dynamics in a lower-dimensional or denoised state space. Determine whether sparse count noise is overwhelming the developmental velocity signal.
 
 - **PCA coupling cost:** compute OT in train-fitted log-normalized PCA space while retaining expression-space interpolation, targets, and gene-level outputs. Test this first because it changes pairing without changing the STREAM output contract.
-- **PCA dynamics:** fit CFM velocities in train-fitted PC space and decode predicted endpoints to genes. Quantify reconstruction loss and determine how CRE-conditioned per-gene prediction would be retained or recovered.
+- **PCA endpoint denoising:** reconstruct log-normalized expression from a train-fitted truncated PCA model, then form gene-space interpolation and velocity targets from those smoothed endpoints. Keep STREAM outputs gene-valued so gene-specific CRE conditioning is unchanged.
+- Do not fit dynamics or predict velocities directly in PC space. PC outputs do not have a natural gene-specific CRE representation and would change the STREAM model contract.
 - **Meta-cells:** aggregate cells within timepoint and local state neighborhoods before OT/CFM. Preserve rare populations and avoid combining distinct lineages.
 - **KNN smoothing:** smooth expression within each timepoint using neighbors defined from training-only PCA coordinates. Never use held-out-stage cells or cross-time neighbors during preprocessing.
 - Compare raw counts, PCA-cost-only OT, meta-cells, and KNN-smoothed endpoints using the same held-out blocks and persistence baseline.
