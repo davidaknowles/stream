@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 
 import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.data import H5adIntervalSampler
+from stream_model.data import H5adIntervalSampler, intervals_with_skips
+from stream_model.denoise import PCADenoiser
 from stream_model.train import (
     artifact_stem,
     build_fixed_validation_batches,
@@ -73,6 +75,11 @@ def main() -> None:
     parser.add_argument("--ot-marginal-relaxation", type=float, default=None)
     parser.add_argument("--ot-pool-size", type=int, default=None)
     parser.add_argument("--ot-pairs-per-pool", type=int, default=None)
+    parser.add_argument("--ot-pair-bank-mode", choices=["sequential", "interval"], default=None)
+    parser.add_argument("--ot-cost-space", choices=["expression", "pca"], default=None)
+    parser.add_argument("--endpoint-denoising", choices=["none", "pca"], default=None)
+    parser.add_argument("--pca-artifact", default=None)
+    parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -107,6 +114,20 @@ def main() -> None:
         cfg.ot_pool_size = args.ot_pool_size
     if args.ot_pairs_per_pool is not None:
         cfg.ot_pairs_per_pool = args.ot_pairs_per_pool
+    if args.ot_pair_bank_mode is not None:
+        cfg.ot_pair_bank_mode = args.ot_pair_bank_mode
+    if args.ot_cost_space is not None:
+        cfg.ot_cost_space = args.ot_cost_space
+    if args.endpoint_denoising is not None:
+        cfg.endpoint_denoising = args.endpoint_denoising
+    if args.pca_artifact is not None:
+        cfg.pca_artifact = cfg.resolve_path(args.pca_artifact)
+    if args.max_interval_skip is not None:
+        cfg.max_interval_skip = args.max_interval_skip
+    if (cfg.ot_cost_space == "pca" or cfg.endpoint_denoising == "pca") and cfg.pca_artifact is None:
+        parser.error("PCA coupling or denoising requires --pca-artifact")
+    if cfg.endpoint_denoising != "none" and cfg.ot_pair_bank_mode != "interval":
+        parser.error("Endpoint denoising requires --ot-pair-bank-mode interval")
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -115,12 +136,16 @@ def main() -> None:
     loss_gene_indices = _load_gene_subset_indices(gene_ids, args.loss_gene_subset, cfg)
     with (cfg.out_dir / "timepoint_split.json").open() as handle:
         split = json.load(handle)
+    adjacent_train_intervals = [tuple(interval) for interval in split["train_intervals"]]
+    train_intervals = intervals_with_skips(
+        split["all_days"], set(split["heldout_days"]), max_skip=cfg.max_interval_skip
+    )
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
     full_sampler = H5adIntervalSampler.from_adata_dir(
         cfg.adata_dir,
         cells,
         gene_ids,
-        [tuple(interval) for interval in split["train_intervals"]],
+        train_intervals,
         batch_size=cfg.ot_pool_size if cfg.ot_pool_size > 0 else cfg.batch_size,
         seed=cfg.seed,
         state_embeddings_dir=cfg.uce_embedding_dir if cfg.cell_state == "uce" and cfg.uce_mode == "cached" else None,
@@ -129,8 +154,14 @@ def main() -> None:
     )
     if args.validation_fraction > 0:
         sampler, validation_sampler = full_sampler.split_validation(args.validation_fraction, cfg.seed + 17)
+        validation_sampler.intervals = adjacent_train_intervals
     else:
         sampler, validation_sampler = full_sampler, None
+    pca = PCADenoiser.load(cfg.pca_artifact) if cfg.pca_artifact is not None else None
+    if pca is not None:
+        expected_hash = hashlib.sha256("\n".join(gene_ids).encode()).hexdigest()
+        if pca.components.shape[1] != len(gene_ids) or pca.metadata.get("gene_ids_sha256") != expected_hash:
+            raise ValueError("PCA artifact gene panel does not match selected_genes.csv")
 
     cre_inputs = None
     cre_dim = None
@@ -158,6 +189,7 @@ def main() -> None:
             batches_per_interval=args.validation_batches_per_interval,
             state_encoder=state_encoder,
             seed=cfg.seed + 23,
+            pca=pca,
         )
         if validation_sampler is not None
         else None
@@ -198,6 +230,13 @@ def main() -> None:
         "ot_marginal_relaxation": cfg.ot_marginal_relaxation,
         "ot_pool_size": cfg.ot_pool_size if cfg.ot_pool_size > 0 else cfg.batch_size,
         "ot_pairs_per_pool": cfg.ot_pairs_per_pool if cfg.ot_pairs_per_pool > 0 else cfg.batch_size,
+        "ot_pair_bank_mode": cfg.ot_pair_bank_mode,
+        "ot_cost_space": cfg.ot_cost_space,
+        "endpoint_denoising": cfg.endpoint_denoising,
+        "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
+        "max_interval_skip": cfg.max_interval_skip,
+        "n_train_intervals": len(train_intervals),
+        "n_validation_intervals": len(adjacent_train_intervals),
     }
 
     def save_best_checkpoint(current_model, current_optimizer, validation_row, train_rows, validation_rows):
@@ -210,6 +249,7 @@ def main() -> None:
             "cre_token_arrays": str(cre_token_path),
             "selection": validation_row,
             "validation_config": validation_config,
+            "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         }
         temporary_path = ckpt_path.with_suffix(ckpt_path.suffix + ".tmp")
         torch.save(payload, temporary_path)
@@ -235,6 +275,7 @@ def main() -> None:
         rollout_every_validations=args.rollout_every_validations,
         validation_rollout_steps=args.validation_rollout_steps,
         checkpoint_callback=save_best_checkpoint,
+        pca=pca,
     )
 
     pd.DataFrame(result.train_metrics).to_csv(metrics_path, index=False)

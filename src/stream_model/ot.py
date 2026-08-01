@@ -23,6 +23,12 @@ def pairwise_squared_cost(x0: torch.Tensor, x1: torch.Tensor) -> torch.Tensor:
     return torch.cdist(x0n, x1n, p=2).pow(2)
 
 
+def pairwise_scaled_euclidean_cost(x0: torch.Tensor, x1: torch.Tensor) -> torch.Tensor:
+    """Squared Euclidean cost averaged over feature dimensions."""
+
+    return torch.cdist(x0.float(), x1.float(), p=2).pow(2) / x0.shape[1]
+
+
 def sinkhorn_coupling(
     cost: torch.Tensor,
     epsilon: float = 0.05,
@@ -124,9 +130,19 @@ def transport_coupling(
 def transport_plan(
     x0: torch.Tensor,
     x1: torch.Tensor,
+    cost_x0: torch.Tensor | None = None,
+    cost_x1: torch.Tensor | None = None,
+    cost_metric: str = "expression_cosine",
     **coupling_options,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    cost = pairwise_squared_cost(x0, x1)
+    cost_x0 = x0 if cost_x0 is None else cost_x0
+    cost_x1 = x1 if cost_x1 is None else cost_x1
+    if cost_metric == "expression_cosine":
+        cost = pairwise_squared_cost(cost_x0, cost_x1)
+    elif cost_metric == "scaled_euclidean":
+        cost = pairwise_scaled_euclidean_cost(cost_x0, cost_x1)
+    else:
+        raise ValueError("cost_metric must be expression_cosine or scaled_euclidean")
     return cost, transport_coupling(cost, **coupling_options)
 
 

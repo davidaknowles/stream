@@ -55,6 +55,13 @@ class StreamConfig:
     ot_marginal_relaxation: float = 0.1
     ot_pool_size: int = 0
     ot_pairs_per_pool: int = 0
+    ot_pair_bank_mode: str = "sequential"
+    ot_cost_space: str = "expression"
+    endpoint_denoising: str = "none"
+    pca_artifact: Path | None = None
+    pca_components: int = 100
+    pca_fit_cells: int = 10_000
+    max_interval_skip: int = 0
     learning_rate: float = 1e-4
     epochs: int = 10
     heldout_days: list[str] = field(default_factory=lambda: ["E9.5", "E10.5"])
@@ -110,6 +117,8 @@ class StreamConfig:
             setattr(cfg, name, cfg.resolve_path(value))
         if cfg.alphagenome_checkpoint is not None:
             cfg.alphagenome_checkpoint = cfg.resolve_path(cfg.alphagenome_checkpoint)
+        if cfg.pca_artifact is not None:
+            cfg.pca_artifact = cfg.resolve_path(cfg.pca_artifact)
         return cfg
 
     def resolve_path(self, value: str | Path) -> Path:

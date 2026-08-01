@@ -41,6 +41,11 @@ OT_PARTIAL_MASS="${OT_PARTIAL_MASS:-}"
 OT_MARGINAL_RELAXATION="${OT_MARGINAL_RELAXATION:-}"
 OT_POOL_SIZE="${OT_POOL_SIZE:-}"
 OT_PAIRS_PER_POOL="${OT_PAIRS_PER_POOL:-}"
+OT_PAIR_BANK_MODE="${OT_PAIR_BANK_MODE:-}"
+OT_COST_SPACE="${OT_COST_SPACE:-}"
+ENDPOINT_DENOISING="${ENDPOINT_DENOISING:-}"
+PCA_ARTIFACT="${PCA_ARTIFACT:-}"
+MAX_INTERVAL_SKIP="${MAX_INTERVAL_SKIP:-}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -72,6 +77,11 @@ if [[ -n "$OT_PARTIAL_MASS" ]]; then args+=(--ot-partial-mass "$OT_PARTIAL_MASS"
 if [[ -n "$OT_MARGINAL_RELAXATION" ]]; then args+=(--ot-marginal-relaxation "$OT_MARGINAL_RELAXATION"); fi
 if [[ -n "$OT_POOL_SIZE" ]]; then args+=(--ot-pool-size "$OT_POOL_SIZE"); fi
 if [[ -n "$OT_PAIRS_PER_POOL" ]]; then args+=(--ot-pairs-per-pool "$OT_PAIRS_PER_POOL"); fi
+if [[ -n "$OT_PAIR_BANK_MODE" ]]; then args+=(--ot-pair-bank-mode "$OT_PAIR_BANK_MODE"); fi
+if [[ -n "$OT_COST_SPACE" ]]; then args+=(--ot-cost-space "$OT_COST_SPACE"); fi
+if [[ -n "$ENDPOINT_DENOISING" ]]; then args+=(--endpoint-denoising "$ENDPOINT_DENOISING"); fi
+if [[ -n "$PCA_ARTIFACT" ]]; then args+=(--pca-artifact "$PCA_ARTIFACT"); fi
+if [[ -n "$MAX_INTERVAL_SKIP" ]]; then args+=(--max-interval-skip "$MAX_INTERVAL_SKIP"); fi
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi

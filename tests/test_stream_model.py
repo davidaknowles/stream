@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stream_model.data import adjacent_intervals, build_time_coordinates, canonical_day_label, incoming_heldout_intervals
+from stream_model.data import (
+    adjacent_intervals,
+    build_time_coordinates,
+    canonical_day_label,
+    incoming_heldout_intervals,
+    intervals_with_skips,
+)
 from stream_model.genome import build_token_arrays, build_token_arrays_from_matrix, link_cres_to_genes, parse_gtf_tss
 
 
@@ -97,6 +103,16 @@ def test_adjacent_intervals_excludes_heldout_days():
     days = ["E8.5", "E9.0", "E9.5", "E10.0"]
     assert adjacent_intervals(days, {"E9.5"}) == [("E8.5", "E9.0")]
     assert incoming_heldout_intervals(days, {"E9.5"}) == [("E9.0", "E9.5")]
+
+
+def test_skipped_intervals_exclude_spans_crossing_heldout_stages():
+    days = ["E8.5", "E8.75", "E9.0", "E9.25", "E9.5"]
+    intervals = intervals_with_skips(days, {"E9.0"}, max_skip=2)
+
+    assert ("E8.5", "E8.75") in intervals
+    assert ("E9.25", "E9.5") in intervals
+    assert ("E8.5", "E9.25") not in intervals
+    assert all("E9.0" not in days[days.index(start) : days.index(end) + 1] for start, end in intervals)
 
 
 def test_time_coordinates_support_physical_days_and_relative_scaling():
@@ -313,6 +329,74 @@ def test_fixed_validation_reports_scale_normalized_loss():
 
     assert metrics["val_loss_raw"] == pytest.approx(50.5)
     assert metrics["val_loss_normalized"] == pytest.approx(1.0)
+
+
+def test_pca_reconstruction_is_nonnegative_and_gene_valued():
+    from stream_model.denoise import PCADenoiser
+
+    pca = PCADenoiser(
+        components=np.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32),
+        mean=np.asarray([0.5, 0.5, 0.5], dtype=np.float32),
+        explained_variance=np.ones(2, dtype=np.float32),
+    )
+    counts = np.asarray([[10.0, 2.0, 0.0], [0.0, 4.0, 8.0]], dtype=np.float32)
+    coordinates = pca.transform_counts(counts)
+    reconstructed = pca.reconstruct_counts(counts)
+
+    assert coordinates.shape == (2, 2)
+    assert reconstructed.shape == counts.shape
+    assert np.isfinite(reconstructed).all()
+    assert (reconstructed >= 0).all()
+
+
+def test_interval_pair_bank_interleaves_intervals_before_repeating():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.pair_bank import IntervalPairBank
+
+    class Config:
+        seed = 7
+        batch_size = 2
+        ot_pairs_per_pool = 4
+        ot_method = "balanced"
+        ot_epsilon = 0.1
+        ot_iterations = 20
+        ot_partial_mass = 0.95
+        ot_marginal_relaxation = 0.1
+        ot_cost_space = "expression"
+        endpoint_denoising = "none"
+
+    class Sampler:
+        intervals = [("0", "1"), ("1", "2"), ("2", "3")]
+
+        def __init__(self):
+            self.calls = {interval: 0 for interval in self.intervals}
+
+        def sample_interval(self, day0, day1):
+            self.calls[(day0, day1)] += 1
+            return IntervalBatch(
+                x0=np.zeros((6, 3), dtype=np.float32),
+                x1=np.ones((6, 3), dtype=np.float32),
+                t0=float(day0),
+                t1=float(day1),
+                day0=day0,
+                day1=day1,
+            )
+
+    sampler = Sampler()
+    bank = IntervalPairBank(Config(), sampler, torch.device("cpu"))
+    first_round = []
+    for _ in range(3):
+        batch = bank.next()
+        first_round.append((batch.day0, batch.day1))
+    second_round = []
+    for _ in range(3):
+        batch = bank.next()
+        second_round.append((batch.day0, batch.day1))
+
+    assert set(first_round) == set(sampler.intervals)
+    assert set(second_round) == set(sampler.intervals)
+    assert sampler.calls == {interval: 1 for interval in sampler.intervals}
 
 
 def test_train_steps_stops_after_validation_patience():

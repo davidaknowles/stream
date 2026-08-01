@@ -64,6 +64,27 @@ def adjacent_intervals(days: list[str], heldout_days: set[str] | None = None) ->
     return [(a, b) for a, b in zip(ordered[:-1], ordered[1:], strict=True) if a not in heldout_days and b not in heldout_days]
 
 
+def intervals_with_skips(
+    days: list[str],
+    heldout_days: set[str] | None = None,
+    max_skip: int = 0,
+) -> list[tuple[str, str]]:
+    """Return adjacent and skipped intervals whose full span avoids held-out stages."""
+
+    if max_skip < 0:
+        raise ValueError("max_skip must be nonnegative")
+    heldout_days = heldout_days or set()
+    ordered = ordered_days(days)
+    intervals = []
+    for skipped in range(max_skip + 1):
+        gap = skipped + 1
+        for start in range(len(ordered) - gap):
+            span = ordered[start : start + gap + 1]
+            if heldout_days.isdisjoint(span):
+                intervals.append((span[0], span[-1]))
+    return intervals
+
+
 def incoming_heldout_intervals(days: list[str], heldout_days: set[str]) -> list[tuple[str, str]]:
     """Return adjacent intervals whose destination, but not source, is held out."""
 
