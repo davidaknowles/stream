@@ -192,6 +192,37 @@ class H5adIntervalSampler:
 
         return self._sample_day(canonical_day_label(day))
 
+    def split_validation(self, fraction: float, seed: int) -> tuple["H5adIntervalSampler", "H5adIntervalSampler"]:
+        """Return stage-stratified train/validation samplers with disjoint cells."""
+
+        if not 0 < fraction < 1:
+            raise ValueError("validation fraction must be between zero and one")
+        rng = np.random.default_rng(seed)
+        used_days = {day for interval in self.intervals for day in interval}
+        manifest = self.manifest[self.manifest["day"].isin(used_days)]
+        validation_indices: list[int] = []
+        for _day, rows in manifest.groupby("day", sort=False):
+            n_validation = min(len(rows) - 1, max(1, int(round(len(rows) * fraction))))
+            if n_validation <= 0:
+                raise ValueError("Every stage needs at least two cells for a disjoint validation split")
+            validation_indices.extend(rng.choice(rows.index.to_numpy(), size=n_validation, replace=False).tolist())
+        validation_mask = manifest.index.isin(validation_indices)
+        return self._copy_with_manifest(manifest.loc[~validation_mask], seed), self._copy_with_manifest(
+            manifest.loc[validation_mask], seed + 1
+        )
+
+    def _copy_with_manifest(self, manifest: pd.DataFrame, seed: int) -> "H5adIntervalSampler":
+        return H5adIntervalSampler(
+            manifest.reset_index(drop=True),
+            self.gene_indices,
+            self.intervals,
+            self.batch_size,
+            seed=seed,
+            state_embeddings_dir=self.state_embeddings_dir,
+            state_dim=self.state_dim,
+            time_coordinates=self.time_coordinates,
+        )
+
     def _sample_day(self, day: str) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         rows = self.manifest[self.manifest["day"] == day]
         if rows.empty:

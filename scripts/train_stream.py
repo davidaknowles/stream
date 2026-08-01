@@ -11,7 +11,13 @@ import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.data import H5adIntervalSampler
-from stream_model.train import artifact_stem, build_model, load_cre_npz, train_steps
+from stream_model.train import (
+    artifact_stem,
+    build_fixed_validation_batches,
+    build_model,
+    load_cre_npz,
+    train_steps,
+)
 from stream_model.uce import build_online_uce_encoder
 
 
@@ -53,6 +59,15 @@ def main() -> None:
     )
     parser.add_argument("--cre-token-arrays", default=None)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--validation-fraction", type=float, default=0.1)
+    parser.add_argument("--validation-batches-per-interval", type=int, default=1)
+    parser.add_argument("--validation-every-epochs", type=int, default=1)
+    parser.add_argument("--early-stopping-patience", type=int, default=12)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=0.005)
+    parser.add_argument("--validation-ema-alpha", type=float, default=0.3)
+    parser.add_argument("--rollout-every-validations", type=int, default=5)
+    parser.add_argument("--validation-rollout-steps", type=int, default=4)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -75,6 +90,8 @@ def main() -> None:
         cfg.batch_size = args.batch_size
     if args.gene_chunk_size is not None:
         cfg.gene_chunk_size = args.gene_chunk_size
+    if args.epochs is not None:
+        cfg.epochs = args.epochs
     device = torch.device(args.device or cfg.device if torch.cuda.is_available() else "cpu")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -84,7 +101,7 @@ def main() -> None:
     with (cfg.out_dir / "timepoint_split.json").open() as handle:
         split = json.load(handle)
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
-    sampler = H5adIntervalSampler.from_adata_dir(
+    full_sampler = H5adIntervalSampler.from_adata_dir(
         cfg.adata_dir,
         cells,
         gene_ids,
@@ -95,6 +112,10 @@ def main() -> None:
         state_dim=cfg.uce_embedding_dim if cfg.cell_state == "uce" else None,
         time_coordinates=split.get("time_coordinates"),
     )
+    if args.validation_fraction > 0:
+        sampler, validation_sampler = full_sampler.split_validation(args.validation_fraction, cfg.seed + 17)
+    else:
+        sampler, validation_sampler = full_sampler, None
 
     cre_inputs = None
     cre_dim = None
@@ -108,10 +129,24 @@ def main() -> None:
         if cfg.cell_state == "uce" and cfg.uce_mode == "online"
         else None
     )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     if args.init_checkpoint is not None:
         checkpoint = torch.load(cfg.resolve_path(args.init_checkpoint), map_location=device)
         model.load_state_dict(checkpoint["model"], strict=True)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+        if "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+    validation_batches = (
+        build_fixed_validation_batches(
+            cfg,
+            validation_sampler,
+            device,
+            batches_per_interval=args.validation_batches_per_interval,
+            state_encoder=state_encoder,
+            seed=cfg.seed + 23,
+        )
+        if validation_sampler is not None
+        else None
+    )
     wandb_run = None
     if cfg.use_wandb:
         import wandb
@@ -128,7 +163,41 @@ def main() -> None:
         if loss_gene_indices is not None:
             wandb_run.config["loss_gene_subset"] = args.loss_gene_subset
             wandb_run.config["n_loss_genes"] = len(loss_gene_indices)
-    metrics = train_steps(
+    stem = artifact_stem(cfg)
+    metrics_path = cfg.out_dir / f"train_metrics_{stem}.csv"
+    validation_metrics_path = cfg.out_dir / f"validation_metrics_{stem}.csv"
+    ckpt_path = cfg.out_dir / f"model_{stem}.pt"
+    validation_config = {
+        "fraction": args.validation_fraction,
+        "batches_per_interval": args.validation_batches_per_interval,
+        "every_epochs": args.validation_every_epochs,
+        "patience": args.early_stopping_patience,
+        "min_delta": args.early_stopping_min_delta,
+        "ema_alpha": args.validation_ema_alpha,
+        "rollout_every_validations": args.rollout_every_validations,
+        "rollout_steps": args.validation_rollout_steps,
+        "n_train_cells": len(sampler.manifest),
+        "n_validation_cells": 0 if validation_sampler is None else len(validation_sampler.manifest),
+    }
+
+    def save_best_checkpoint(current_model, current_optimizer, validation_row, train_rows, validation_rows):
+        payload = {
+            "model": current_model.state_dict(),
+            "optimizer": current_optimizer.state_dict(),
+            "config": cfg.to_dict(),
+            "model_contract": "online_uce_autonomous_v1" if state_encoder is not None else "legacy_v1",
+            "gene_ids": gene_ids,
+            "cre_token_arrays": str(cre_token_path),
+            "selection": validation_row,
+            "validation_config": validation_config,
+        }
+        temporary_path = ckpt_path.with_suffix(ckpt_path.suffix + ".tmp")
+        torch.save(payload, temporary_path)
+        temporary_path.replace(ckpt_path)
+        pd.DataFrame(train_rows).to_csv(metrics_path, index=False)
+        pd.DataFrame(validation_rows).to_csv(validation_metrics_path, index=False)
+
+    result = train_steps(
         cfg,
         sampler,
         model,
@@ -138,28 +207,37 @@ def main() -> None:
         wandb_run=wandb_run,
         loss_gene_indices=loss_gene_indices,
         state_encoder=state_encoder,
+        validation_batches=validation_batches,
+        validation_every_epochs=args.validation_every_epochs,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
+        validation_ema_alpha=args.validation_ema_alpha,
+        rollout_every_validations=args.rollout_every_validations,
+        validation_rollout_steps=args.validation_rollout_steps,
+        checkpoint_callback=save_best_checkpoint,
     )
 
-    stem = artifact_stem(cfg)
-    metrics_path = cfg.out_dir / f"train_metrics_{stem}.csv"
-    ckpt_path = cfg.out_dir / f"model_{stem}.pt"
-    pd.DataFrame(metrics).to_csv(metrics_path, index=False)
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "config": cfg.to_dict(),
-            "model_contract": "online_uce_autonomous_v1" if state_encoder is not None else "legacy_v1",
-            "gene_ids": gene_ids,
-            "cre_token_arrays": str(cre_token_path),
-        },
-        ckpt_path,
-    )
+    pd.DataFrame(result.train_metrics).to_csv(metrics_path, index=False)
+    if result.validation_metrics:
+        pd.DataFrame(result.validation_metrics).to_csv(validation_metrics_path, index=False)
+    else:
+        save_best_checkpoint(model, optimizer, {}, result.train_metrics, [])
     if wandb_run is not None:
-        wandb_run.summary["final_train_loss"] = float(metrics[-1]["loss"]) if metrics else None
+        wandb_run.summary["final_train_loss"] = float(result.train_metrics[-1]["loss"]) if result.train_metrics else None
+        wandb_run.summary["best_validation_loss"] = result.best_validation_loss
+        wandb_run.summary["best_epoch"] = result.best_epoch
+        wandb_run.summary["best_global_step"] = result.best_global_step
+        wandb_run.summary["stopped_early"] = result.stopped_early
         wandb_run.summary["checkpoint_path"] = str(ckpt_path)
         wandb_run.finish()
     print(f"Wrote {metrics_path}")
+    if result.validation_metrics:
+        print(f"Wrote {validation_metrics_path}")
     print(f"Wrote {ckpt_path}")
+    print(
+        f"Best normalized validation EMA={result.best_validation_loss} at step={result.best_global_step}; "
+        f"stopped_early={result.stopped_early}"
+    )
 
 
 if __name__ == "__main__":

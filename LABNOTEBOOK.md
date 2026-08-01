@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-07-31
+
+- Replaced fixed-budget-only CFM fitting with validation-based checkpoint selection and early stopping. Ten percent of cells are held out independently within every observed training stage; fixed OT pairs and UCE encodings from those cells define an interval-balanced validation set. Selection uses an EMA of per-gene velocity-RMS-normalized CFM MSE, with a 0.5% minimum relative improvement and 12-check patience. Raw validation MSE and four-step autonomous mean-shift R-squared/MAE/Wasserstein diagnostics on observed intervals are logged separately. Held-out stages remain inaccessible during training and model selection. Best checkpoints now include optimizer state and stopping metadata for exact continuation.
+- The early-stopping GPU smoke completed and wrote a reloadable model/optimizer checkpoint plus validation metrics. Submitted matched 10k online-UCE reruns for independent-CRE tokens (training `19412555`, causal evaluation `19412556`) and TSS-context tokens (training `19412557`, causal evaluation `19412558`). Both use a 50-epoch maximum; stopping is determined by the shared validation rule rather than that cap unless the validation score continues improving.
+
 ## 2026-07-29
 
 - Expanded `docs/main.tex` from a methods draft into a paper-style manuscript with Abstract, Introduction, Results, Methods, Discussion, figures, data-source table, result tables, and inline references.

@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
 
 from .models import StandardCFM, StreamModel, mse_cfm_loss
 from .ot import ot_cfm_batch, ot_cfm_batch_with_state
+from .rollout import mean_shift_metrics, projected_euler_rollout
+
+
+@dataclass(frozen=True)
+class FixedValidationBatch:
+    """A deterministic CFM target and its unpaired endpoint distributions."""
+
+    day0: str
+    day1: str
+    t0: float
+    t1: float
+    state_t: torch.Tensor
+    target: torch.Tensor
+    x0: torch.Tensor
+    x1: torch.Tensor
+
+
+@dataclass(frozen=True)
+class TrainingResult:
+    train_metrics: list[dict[str, float]]
+    validation_metrics: list[dict[str, float]]
+    best_validation_loss: float | None
+    best_epoch: int | None
+    best_global_step: int | None
+    stopped_early: bool
 
 
 def load_cre_npz(path: str | Path, device: torch.device) -> dict[str, torch.Tensor]:
@@ -152,6 +179,187 @@ def _loss_gene_index_tensor(
     return indices
 
 
+@torch.no_grad()
+def build_fixed_validation_batches(
+    config,
+    sampler,
+    device: torch.device,
+    batches_per_interval: int = 1,
+    state_encoder=None,
+    seed: int | None = None,
+) -> list[FixedValidationBatch]:
+    """Materialize fixed, interval-stratified OT-CFM validation examples."""
+
+    if batches_per_interval <= 0:
+        raise ValueError("batches_per_interval must be positive")
+    base_seed = int(config.seed if seed is None else seed)
+    batches: list[FixedValidationBatch] = []
+    for interval_index, (day0, day1) in enumerate(sampler.intervals):
+        for batch_index in range(batches_per_interval):
+            sampled = sampler.sample_interval(day0, day1)
+            x0 = torch.as_tensor(sampled.x0, device=device)
+            x1 = torch.as_tensor(sampled.x1, device=device)
+            batch_seed = base_seed + interval_index * 10_000 + batch_index
+            generator = torch.Generator(device=device).manual_seed(batch_seed)
+            if state_encoder is not None:
+                xt, target, _tau = ot_cfm_batch(
+                    x0,
+                    x1,
+                    sampled.t0,
+                    sampled.t1,
+                    epsilon=config.ot_epsilon,
+                    iterations=config.ot_iterations,
+                    generator=generator,
+                )
+                state_t = state_encoder.encode(xt, seed=batch_seed)
+            elif sampled.state0 is None:
+                state_t, target, _tau = ot_cfm_batch(
+                    x0,
+                    x1,
+                    sampled.t0,
+                    sampled.t1,
+                    epsilon=config.ot_epsilon,
+                    iterations=config.ot_iterations,
+                    generator=generator,
+                )
+            else:
+                state0 = torch.as_tensor(sampled.state0, device=device)
+                state1 = torch.as_tensor(sampled.state1, device=device)
+                _xt, target, _tau, state_t = ot_cfm_batch_with_state(
+                    x0,
+                    x1,
+                    state0,
+                    state1,
+                    sampled.t0,
+                    sampled.t1,
+                    epsilon=config.ot_epsilon,
+                    iterations=config.ot_iterations,
+                    generator=generator,
+                )
+            batches.append(
+                FixedValidationBatch(
+                    day0=day0,
+                    day1=day1,
+                    t0=sampled.t0,
+                    t1=sampled.t1,
+                    state_t=state_t.detach().cpu(),
+                    target=target.detach().cpu(),
+                    x0=x0.detach().cpu(),
+                    x1=x1.detach().cpu(),
+                )
+            )
+    return batches
+
+
+def validation_velocity_scale(
+    batches: list[FixedValidationBatch],
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Estimate per-gene target RMS with a robust floor for normalized MSE."""
+
+    if not batches:
+        raise ValueError("At least one validation batch is required")
+    indices = _loss_gene_index_tensor(loss_gene_indices, torch.device("cpu"))
+    targets = [batch.target if indices is None else batch.target.index_select(1, indices) for batch in batches]
+    second_moment = torch.cat(targets).float().square().mean(dim=0)
+    positive = second_moment[second_moment > 0]
+    floor = max(float(torch.median(positive)) * 1e-3, 1e-6) if len(positive) else 1e-6
+    return second_moment.clamp_min(floor).sqrt()
+
+
+def _predict_loss_genes(
+    model,
+    state: torch.Tensor,
+    cre_inputs: dict[str, torch.Tensor] | None,
+    gene_chunk_size: int,
+    loss_gene_indices: torch.Tensor | None,
+) -> torch.Tensor:
+    if cre_inputs is None:
+        prediction = model(state)
+        return prediction if loss_gene_indices is None else prediction.index_select(1, loss_gene_indices)
+    if loss_gene_indices is None:
+        return predict_stream_chunked(model, state, cre_inputs, gene_chunk_size)
+    if gene_chunk_size <= 0 or gene_chunk_size >= len(loss_gene_indices):
+        return model(state, **cre_inputs, gene_indices=loss_gene_indices)
+    return torch.cat(
+        [model(state, **cre_inputs, gene_indices=chunk) for chunk in loss_gene_indices.split(gene_chunk_size)], dim=1
+    )
+
+
+@torch.no_grad()
+def evaluate_fixed_validation(
+    model,
+    batches: list[FixedValidationBatch],
+    velocity_scale: torch.Tensor,
+    cre_inputs: dict[str, torch.Tensor] | None,
+    gene_chunk_size: int,
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
+) -> dict[str, float]:
+    """Evaluate interval-balanced raw and velocity-scale-normalized CFM MSE."""
+
+    device = next(model.parameters()).device
+    indices = _loss_gene_index_tensor(loss_gene_indices, device)
+    scale = velocity_scale.to(device)
+    raw_losses = []
+    normalized_losses = []
+    model.eval()
+    for batch in batches:
+        state = batch.state_t.to(device)
+        target = batch.target.to(device)
+        if indices is not None:
+            target = target.index_select(1, indices)
+        prediction = _predict_loss_genes(model, state, cre_inputs, gene_chunk_size, indices)
+        squared_error = (prediction - target).square()
+        raw_losses.append(float(squared_error.mean().cpu()))
+        normalized_losses.append(float((squared_error / scale.square()).mean().cpu()))
+    return {
+        "val_loss_raw": float(np.mean(raw_losses)),
+        "val_loss_normalized": float(np.mean(normalized_losses)),
+    }
+
+
+@torch.no_grad()
+def evaluate_observed_rollouts(
+    config,
+    model,
+    batches: list[FixedValidationBatch],
+    cre_inputs: dict[str, torch.Tensor] | None,
+    state_encoder,
+    steps: int,
+    loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
+) -> dict[str, float]:
+    """Diagnose autonomous endpoint prediction on observed validation intervals."""
+
+    if state_encoder is None and config.cell_state != "expression":
+        return {}
+    device = next(model.parameters()).device
+    indices = None if loss_gene_indices is None else np.asarray(loss_gene_indices, dtype=np.int64)
+    interval_metrics = []
+    model.eval()
+    for interval_index, batch in enumerate(batches):
+        x0 = batch.x0.to(device)
+
+        def velocity_fn(current_x, seed):
+            state = state_encoder.encode(current_x, seed) if state_encoder is not None else current_x
+            return _predict_loss_genes(model, state, cre_inputs, config.gene_chunk_size, None)
+
+        predicted = projected_euler_rollout(
+            x0,
+            batch.t0,
+            batch.t1,
+            velocity_fn,
+            steps=steps,
+            seed=int(config.seed) + interval_index * 10_000,
+        )
+        interval_metrics.append(
+            mean_shift_metrics(batch.x0.numpy(), batch.x1.numpy(), predicted.cpu().numpy(), indices)
+        )
+    return {
+        f"observed_rollout_{key}": float(np.nanmean([row[key] for row in interval_metrics]))
+        for key in interval_metrics[0]
+    }
+
+
 def train_steps(
     config,
     sampler,
@@ -162,10 +370,29 @@ def train_steps(
     wandb_run=None,
     loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
     state_encoder=None,
-) -> list[dict[str, float]]:
+    validation_batches: list[FixedValidationBatch] | None = None,
+    validation_every_epochs: int = 1,
+    early_stopping_patience: int = 12,
+    early_stopping_min_delta: float = 0.005,
+    validation_ema_alpha: float = 0.3,
+    rollout_every_validations: int = 5,
+    validation_rollout_steps: int = 4,
+    checkpoint_callback: Callable | None = None,
+) -> TrainingResult:
     device = next(model.parameters()).device
     loss_index_tensor = _loss_gene_index_tensor(loss_gene_indices, device)
     metrics: list[dict[str, float]] = []
+    validation_metrics: list[dict[str, float]] = []
+    velocity_scale = (
+        validation_velocity_scale(validation_batches, loss_gene_indices) if validation_batches is not None else None
+    )
+    best_validation_loss = None
+    best_epoch = None
+    best_global_step = None
+    validation_ema = None
+    checks_without_improvement = 0
+    validation_checks = 0
+    stopped_early = False
     for epoch in range(config.epochs):
         model.train()
         for step in range(steps_per_epoch):
@@ -231,4 +458,74 @@ def train_steps(
                     },
                     step=global_step,
                 )
-    return metrics
+        should_validate = validation_batches is not None and (
+            (epoch + 1) % validation_every_epochs == 0 or epoch + 1 == config.epochs
+        )
+        if not should_validate:
+            continue
+        validation_checks += 1
+        current = evaluate_fixed_validation(
+            model,
+            validation_batches,
+            velocity_scale,
+            cre_inputs,
+            config.gene_chunk_size,
+            loss_gene_indices,
+        )
+        normalized = current["val_loss_normalized"]
+        validation_ema = (
+            normalized
+            if validation_ema is None
+            else validation_ema_alpha * normalized + (1.0 - validation_ema_alpha) * validation_ema
+        )
+        improved = best_validation_loss is None or validation_ema < best_validation_loss * (1.0 - early_stopping_min_delta)
+        if improved:
+            best_validation_loss = validation_ema
+            best_epoch = epoch
+            best_global_step = (epoch + 1) * steps_per_epoch
+            checks_without_improvement = 0
+        else:
+            checks_without_improvement += 1
+        row = {
+            "epoch": epoch,
+            "global_step": (epoch + 1) * steps_per_epoch,
+            **current,
+            "val_loss_normalized_ema": validation_ema,
+            "best_val_loss_normalized_ema": best_validation_loss,
+            "checks_without_improvement": checks_without_improvement,
+            "is_best": int(improved),
+        }
+        run_rollout = rollout_every_validations > 0 and (
+            validation_checks == 1
+            or validation_checks % rollout_every_validations == 0
+            or checks_without_improvement >= early_stopping_patience
+            or epoch + 1 == config.epochs
+        )
+        if run_rollout:
+            row.update(
+                evaluate_observed_rollouts(
+                    config,
+                    model,
+                    validation_batches,
+                    cre_inputs,
+                    state_encoder,
+                    validation_rollout_steps,
+                    loss_gene_indices,
+                )
+            )
+        validation_metrics.append(row)
+        if wandb_run is not None:
+            wandb_run.log({f"validation/{key}": value for key, value in row.items()}, step=row["global_step"])
+        if improved and checkpoint_callback is not None:
+            checkpoint_callback(model, optimizer, row, metrics, validation_metrics)
+        if checks_without_improvement >= early_stopping_patience:
+            stopped_early = True
+            break
+    return TrainingResult(
+        train_metrics=metrics,
+        validation_metrics=validation_metrics,
+        best_validation_loss=best_validation_loss,
+        best_epoch=best_epoch,
+        best_global_step=best_global_step,
+        stopped_early=stopped_early,
+    )

@@ -109,6 +109,28 @@ def test_time_coordinates_support_physical_days_and_relative_scaling():
     assert canonical_day_label("E9.0") == "E9.0"
 
 
+def test_interval_sampler_validation_split_is_stage_stratified_and_disjoint():
+    from stream_model.data import H5adIntervalSampler
+
+    manifest = pd.DataFrame(
+        [
+            {"path": "atlas.h5ad", "row_idx": row, "day": day}
+            for day_index, day in enumerate(["E8.5", "E8.75", "E9.0"])
+            for row in range(day_index * 10, day_index * 10 + 10)
+        ]
+    )
+    sampler = H5adIntervalSampler(
+        manifest, np.arange(3), [("E8.5", "E8.75"), ("E8.75", "E9.0")], batch_size=2
+    )
+    train, validation = sampler.split_validation(0.2, seed=11)
+    train_cells = set(zip(train.manifest["path"], train.manifest["row_idx"]))
+    validation_cells = set(zip(validation.manifest["path"], validation.manifest["row_idx"]))
+
+    assert train_cells.isdisjoint(validation_cells)
+    assert validation.manifest.groupby("day").size().to_dict() == {"E8.5": 2, "E8.75": 2, "E9.0": 2}
+    assert train.manifest.groupby("day").size().to_dict() == {"E8.5": 8, "E8.75": 8, "E9.0": 8}
+
+
 def test_ot_and_cfm_shapes():
     torch = pytest.importorskip("torch")
     from stream_model.ot import cfm_interpolate, pairwise_squared_cost, sample_coupling_pairs, sinkhorn_coupling
@@ -220,6 +242,98 @@ def test_stream_chunked_prediction_matches_full_forward(variant):
     assert torch.allclose(chunked, full, atol=1e-5)
     assert torch.allclose(chunked_loss, full_loss, atol=1e-5)
     assert torch.allclose(subset_loss, manual_subset_loss, atol=1e-5)
+
+
+def test_fixed_validation_reports_scale_normalized_loss():
+    torch = pytest.importorskip("torch")
+    from stream_model.train import FixedValidationBatch, evaluate_fixed_validation, validation_velocity_scale
+
+    class ZeroModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, x):
+            return torch.zeros_like(x) + self.weight
+
+    batch = FixedValidationBatch(
+        day0="E8.5",
+        day1="E8.75",
+        t0=8.5,
+        t1=8.75,
+        state_t=torch.zeros((2, 2)),
+        target=torch.tensor([[1.0, 10.0], [1.0, 10.0]]),
+        x0=torch.zeros((2, 2)),
+        x1=torch.ones((2, 2)),
+    )
+    scale = validation_velocity_scale([batch])
+    metrics = evaluate_fixed_validation(ZeroModel(), [batch], scale, None, gene_chunk_size=2)
+
+    assert metrics["val_loss_raw"] == pytest.approx(50.5)
+    assert metrics["val_loss_normalized"] == pytest.approx(1.0)
+
+
+def test_train_steps_stops_after_validation_patience():
+    torch = pytest.importorskip("torch")
+    from stream_model.data import IntervalBatch
+    from stream_model.train import FixedValidationBatch, train_steps
+
+    class Config:
+        epochs = 10
+        seed = 3
+        batch_size = 2
+        ot_epsilon = 0.1
+        ot_iterations = 5
+        gene_chunk_size = 2
+        model_variant = "standard_cfm"
+        cell_state = "expression"
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((2, 2), dtype=np.float32),
+                x1=np.ones((2, 2), dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0="0",
+                day1="1",
+            )
+
+    class ConstantModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.value = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, x):
+            return torch.zeros_like(x) + self.value
+
+    fixed = FixedValidationBatch(
+        day0="0",
+        day1="1",
+        t0=0.0,
+        t1=1.0,
+        state_t=torch.zeros((2, 2)),
+        target=torch.ones((2, 2)),
+        x0=torch.zeros((2, 2)),
+        x1=torch.ones((2, 2)),
+    )
+    model = ConstantModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    result = train_steps(
+        Config(),
+        Sampler(),
+        model,
+        optimizer,
+        steps_per_epoch=1,
+        validation_batches=[fixed],
+        early_stopping_patience=2,
+        rollout_every_validations=0,
+    )
+
+    assert result.stopped_early
+    assert result.best_epoch == 0
+    assert len(result.train_metrics) == 3
+    assert len(result.validation_metrics) == 3
 
 
 @pytest.mark.parametrize("variant", ["film", "cross_attention"])

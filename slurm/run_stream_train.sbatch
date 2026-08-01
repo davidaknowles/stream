@@ -13,6 +13,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
 CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
 VARIANT="${VARIANT:-film}"
 STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-100}"
+EPOCHS="${EPOCHS:-}"
 HVG_CSV="${HVG_CSV:-}"
 N_HVG="${N_HVG:-}"
 OUT_DIR="${OUT_DIR:-}"
@@ -27,6 +28,14 @@ EXPERIMENT_LABEL="${EXPERIMENT_LABEL:-}"
 INIT_CHECKPOINT="${INIT_CHECKPOINT:-}"
 LOSS_GENE_SUBSET="${LOSS_GENE_SUBSET:-}"
 CRE_TOKEN_ARRAYS="${CRE_TOKEN_ARRAYS:-}"
+VALIDATION_FRACTION="${VALIDATION_FRACTION:-0.1}"
+VALIDATION_BATCHES_PER_INTERVAL="${VALIDATION_BATCHES_PER_INTERVAL:-1}"
+VALIDATION_EVERY_EPOCHS="${VALIDATION_EVERY_EPOCHS:-1}"
+EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-12}"
+EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.005}"
+VALIDATION_EMA_ALPHA="${VALIDATION_EMA_ALPHA:-0.3}"
+ROLLOUT_EVERY_VALIDATIONS="${ROLLOUT_EVERY_VALIDATIONS:-5}"
+VALIDATION_ROLLOUT_STEPS="${VALIDATION_ROLLOUT_STEPS:-4}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -43,7 +52,16 @@ export WANDB_DIR="$PROJECT_ROOT/outputs/stream/wandb"
 export WANDB_PROJECT="${WANDB_PROJECT:-stream}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-args=(--config "$CONFIG" --variant "$VARIANT" --steps-per-epoch "$STEPS_PER_EPOCH" --device cuda)
+args=(--config "$CONFIG" --variant "$VARIANT" --steps-per-epoch "$STEPS_PER_EPOCH" --device cuda \
+  --validation-fraction "$VALIDATION_FRACTION" \
+  --validation-batches-per-interval "$VALIDATION_BATCHES_PER_INTERVAL" \
+  --validation-every-epochs "$VALIDATION_EVERY_EPOCHS" \
+  --early-stopping-patience "$EARLY_STOPPING_PATIENCE" \
+  --early-stopping-min-delta "$EARLY_STOPPING_MIN_DELTA" \
+  --validation-ema-alpha "$VALIDATION_EMA_ALPHA" \
+  --rollout-every-validations "$ROLLOUT_EVERY_VALIDATIONS" \
+  --validation-rollout-steps "$VALIDATION_ROLLOUT_STEPS")
+if [[ -n "$EPOCHS" ]]; then args+=(--epochs "$EPOCHS"); fi
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi
