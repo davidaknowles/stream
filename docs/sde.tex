@@ -1,0 +1,422 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\geometry{a4paper, margin=1in}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black, urlcolor=blue!50!black}
+
+\newcommand{\stream}{STREAM}
+\newcommand{\uce}{UCE}
+\newcommand{\cre}{cCRE}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\dd}{\mathrm{d}}
+
+\title{Proposal: stochastic population dynamics for STREAM}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The current \stream{} model learns a deterministic, autonomous expression-space
+vector field from optimal-transport-paired developmental snapshots. Across
+balanced, partial, and unbalanced transport; PCA, KNN, and metacell denoising;
+adjacent and skipped intervals; and contiguous held-out blocks, causal endpoint
+prediction remains close to expression persistence. This proposal replaces the
+deterministic ordinary differential equation with a neural stochastic
+differential equation and trains predicted populations directly against
+observed endpoint populations. The drift remains a per-gene,
+regulatory-sequence-conditioned velocity. A low-rank diffusion term represents
+branching and unresolved fate variation. The recommended objective is a
+reparameterized, simulation-based Sinkhorn divergence that does not require
+individual cross-time cell pairs. We define the model, objective,
+regularization, evaluation, implementation stages, and decision criteria for a
+focused stochastic-flow ablation.
+\end{abstract}
+
+\section{Motivation}
+
+The deterministic autonomous model has the form
+\begin{equation}
+  \frac{\dd x}{\dd t}
+  = v_\theta\!\left(E(x), \{Z_g\}_{g=1}^{G}\right),
+  \label{eq:ode}
+\end{equation}
+where $x\in\R^G_{\geq 0}$ is expression, $E$ is the frozen \uce{}
+encoder, and $Z_g$ contains the AlphaGenome-derived regulatory tokens linked to
+gene $g$. The model predicts one expression velocity per gene. Training uses
+conditional flow-matching targets formed from optimal-transport pairs between
+cross-sectional timepoints.
+
+The completed ablations do not establish meaningful improvement over
+persistence. On the original two-stage holdout, the best mean
+persistence-normalized Sinkhorn skill is approximately $0.009$, while
+gene-level mean-shift $R^2$ remains negative. Holding out the middle three
+stages together increases the best mean Sinkhorn skill to approximately $0.02$,
+but mean-shift $R^2$ is still negative. A long observed-endpoint chord across
+the held-out block improves some mean-shift errors without producing a
+consistent distributional improvement.
+
+These results suggest that the main limitation is not simply model capacity.
+Cross-sectional OT does not identify a unique descendant for each source cell,
+development branches, and cell numbers change through proliferation and death.
+A deterministic map can only assign one local velocity to a state, whereas the
+data may support a distribution of descendants. Moreover, pairwise velocity
+regression is not the same objective as accurate endpoint population
+prediction.
+
+\section{Objective and scope}
+
+The primary question is whether representing conditional fate variability and
+training against endpoint distributions improves causal forecasting over
+persistence. The first stochastic model should therefore:
+\begin{itemize}
+  \item retain gene-valued drift and the existing \uce{}/\cre{} conditioning;
+  \item remain autonomous, with no explicit developmental-time input;
+  \item avoid requiring one-to-one cross-time cell pairs in the primary loss;
+  \item generate multiple descendants per source cell;
+  \item optimize the same type of endpoint discrepancy used for evaluation;
+  \item separate stochastic biological variation from unrestricted technical
+        noise through a constrained diffusion parameterization.
+\end{itemize}
+
+The initial experiment will not attempt to model division events explicitly,
+infer lineage trees, or reproduce raw count sampling. A growth-weighted
+extension is described as a second stage.
+
+\section{Autonomous neural SDE}
+
+We propose the expression-space stochastic differential equation
+\begin{equation}
+  \dd X_t
+  = \mu_\theta(X_t)\,\dd t
+  + G_\phi(X_t)\,\dd W_t,
+  \qquad X_t\in\R^G_{\geq 0},
+  \label{eq:sde}
+\end{equation}
+where $W_t$ is an $r$-dimensional Wiener process. The drift is the existing
+regulatory model,
+\begin{equation}
+  \mu_{\theta,g}(x)
+  = \operatorname{STREAM}_{\theta,g}
+    \!\left(E(x), Z_g\right).
+  \label{eq:drift}
+\end{equation}
+Thus stochastic training does not change the interpretation of the predicted
+gene velocity.
+
+\subsection{Low-rank diffusion}
+
+A dense $G\times G$ diffusion matrix is neither identifiable nor tractable for
+$G=10{,}000$. Fully independent gene noise is computationally simple but fails
+to represent coordinated lineage changes. We instead propose a low-rank
+diffusion with $r=8$--$32$:
+\begin{equation}
+  G_\phi(x)
+  =
+  \begin{bmatrix}
+    b_{\phi,1}(E(x),Z_1)^\top \\
+    \vdots \\
+    b_{\phi,G}(E(x),Z_G)^\top
+  \end{bmatrix}
+  \in \R^{G\times r}.
+  \label{eq:lowrank}
+\end{equation}
+Each gene's promoter-token representation receives a shared $r$-dimensional
+diffusion head. This preserves the shared regulatory architecture and allows
+one latent noise direction to alter a coordinated set of genes. The diffusion
+head can use a bounded output,
+\begin{equation}
+  b_{\phi,g}=b_{\max}\tanh(\widetilde b_{\phi,g}),
+\end{equation}
+which prevents the model from improving a distributional loss by adding
+unbounded noise.
+
+The lowest-risk first implementation may instead use a state-conditioned
+scalar $a_\phi(E(x))$ multiplying a learned global $G\times r$ loading matrix.
+This is less expressive but provides a useful test of whether any coordinated
+stochasticity helps before adding a second regulatory output head.
+
+\section{Differentiable stochastic rollout}
+
+For an interval of length $T=t_1-t_0$, Euler--Maruyama with $K$ steps gives
+\begin{align}
+  X^{(m)}_{k+1}
+  &= \Pi_+\!\left[
+       X^{(m)}_k
+       + \mu_\theta(X^{(m)}_k)\Delta t
+       + G_\phi(X^{(m)}_k)\sqrt{\Delta t}\,
+         \epsilon^{(m)}_k
+     \right], \\
+  \epsilon^{(m)}_k &\sim \N(0,I_r),
+  \qquad \Delta t=T/K,
+  \label{eq:em}
+\end{align}
+where $m$ indexes stochastic particles and $\Pi_+$ clamps negative expression
+values to zero. The Gaussian draws are external random inputs, so
+Equation~\ref{eq:em} is reparameterized and gradients propagate to drift and
+diffusion parameters.
+
+Online \uce{} preprocessing includes discrete gene sampling and is frozen.
+Consequently, the current encoder should be treated as a stop-gradient state
+map at each step. Gradients still reach earlier updates through the additive
+identity path in Equation~\ref{eq:em}, and each step contributes direct
+parameter gradients. This avoids claiming differentiability through discrete
+\uce{} tokenization. Fixed random seeds should be used within each optimization
+step to reduce gradient variance.
+
+\section{Recommended population-level objective}
+
+Let $\{x_i^0\}_{i=1}^{B}$ be source cells and
+$\{x_j^1\}_{j=1}^{B_1}$ an independently sampled target population. Generate
+$M$ particles from every source cell and collect the predicted endpoint set
+\begin{equation}
+  \widehat{\mathcal X}_1
+  = \left\{X_T^{(i,m)}: i=1,\ldots,B,\;m=1,\ldots,M\right\}.
+\end{equation}
+The principal loss is a debiased Sinkhorn divergence in a train-only,
+log-normalized PCA scoring space $P$:
+\begin{equation}
+  \mathcal L_{\mathrm{pop}}
+  = S_\varepsilon\!\left(
+      P(\widehat{\mathcal X}_1),
+      P(\mathcal X_1)
+    \right).
+  \label{eq:sinkhorn}
+\end{equation}
+PCA is used here as a differentiable population metric and denoising transform,
+not as the model's dynamical output space. Drift and simulated states remain
+gene-valued.
+
+This loss aligns training with held-out endpoint evaluation and removes the
+need to select an individual OT partner for every cell. A minibatch size of
+$B=128$--$256$, $M=4$ particles, $K=4$ rollout steps, and rank $r=8$ is an
+appropriate initial configuration. Larger $M$, $K$, and $r$ should be tested
+only after establishing a positive endpoint signal.
+
+\subsection{Regularization}
+
+Without constraints, diffusion can absorb model error or produce an overly
+broad population. We propose
+\begin{equation}
+  \mathcal L
+  = \mathcal L_{\mathrm{pop}}
+  + \lambda_G\E\left[\lVert G_\phi(X)\rVert_F^2\right]
+  + \lambda_\mu\E\left[\lVert \mu_\theta(X)\rVert_2^2\right]
+  + \lambda_{\mathrm{mom}}\mathcal L_{\mathrm{mom}},
+  \label{eq:full-loss}
+\end{equation}
+where $\mathcal L_{\mathrm{mom}}$ penalizes large errors in endpoint gene means
+and variances. The moment term is important because the completed deterministic
+experiments occasionally improve Sinkhorn distance while predicting incorrect
+gene-level mean shifts. Diffusion should be initialized near zero, and
+$b_{\max}$ should be calibrated against within-timepoint variation.
+
+To keep the distributional loss informative, target and source samples should
+be drawn independently at every optimization step. Validation must use fixed
+cell splits, seeds, source cells, target cells, and Brownian increments.
+
+\section{Cheaper paired-transition baseline}
+
+Before full rollout training, the existing OT pair banks can support a
+heteroscedastic transition likelihood:
+\begin{equation}
+  x_1-x_0
+  \sim
+  \N\!\left(
+    \mu_\theta(x_0)\Delta t,
+    \Sigma_\phi(x_0)\Delta t
+  \right).
+  \label{eq:nll}
+\end{equation}
+For diagonal $\Sigma_\phi$, the negative log likelihood is inexpensive and
+tests whether state-dependent uncertainty improves calibration. However, this
+objective inherits arbitrary OT pairing and can reward inflated variance. It
+should be treated as an implementation smoke test and baseline, not the main
+stochastic-flow result.
+
+\section{Alternatives not recommended for the first test}
+
+\paragraph{Noisy conditional flow matching.}
+One can sample noisy Brownian-bridge interpolants around OT pairs and regress a
+time-dependent bridge drift. This is closely related to stochastic
+interpolants and simulation-free Schrodinger bridges
+\cite{albergo2023stochastic,tong2024simulationfree}. It requires the
+interpolation coordinate as an explicit model input and continues to rely on
+cross-time couplings. It is therefore less direct for the current autonomous,
+no-time-conditioning question.
+
+\paragraph{Iterative Schrodinger bridge fitting.}
+Iterative proportional fitting can learn forward and backward stochastic
+bridges between endpoint distributions~\cite{debortoli2021diffusion}. This is a
+principled distributional approach but requires repeated simulation and
+time-dependent score or drift models. It should be considered if the simpler
+autonomous SDE shows a signal.
+
+\paragraph{Independent per-gene noise.}
+A diagonal diffusion head is easy to implement but mostly represents technical
+noise and cannot express correlated fate decisions. It remains a useful
+negative control against low-rank diffusion.
+
+\section{Growth and changing population mass}
+
+An SDE transports probability mass but does not create or remove it. If
+proliferation and death are central, add a growth-rate head
+$\gamma_\psi(E(x))$ and particle weights
+\begin{equation}
+  w_{k+1}=w_k\exp\!\left(\gamma_\psi(X_k)\Delta t\right).
+\end{equation}
+Training then uses weighted or unbalanced Sinkhorn divergence. This separates
+state motion, stochastic fate dispersion, and mass change. Growth should be
+introduced only after comparing deterministic and stochastic transport under
+fixed mass; otherwise diffusion and growth may compensate for each other and
+be difficult to identify.
+
+\section{Evaluation}
+
+For each source cell, generate $M_{\mathrm{eval}}=16$--$64$ particles with
+fixed seeds. Report:
+\begin{itemize}
+  \item debiased Sinkhorn divergence and skill relative to persistence;
+  \item gene-level mean-shift $R^2$ and mean absolute error;
+  \item mean per-gene Wasserstein-1 distance;
+  \item endpoint covariance error in train-only PCA space;
+  \item coverage and calibration of observed cells under generated particles;
+  \item metrics stratified by annotated cell type or lineage where available;
+  \item diffusion-disabled rollout from the same checkpoint;
+  \item sensitivity to particle count and integration steps.
+\end{itemize}
+
+Persistence should be represented by repeated source cells, so it has the same
+number of particles as the stochastic model. A deterministic \stream{} model,
+the same SDE with $G=0$, and a pure-diffusion model with $\mu=0$ provide the
+necessary ablations. Pairwise displacement $R^2$ should remain secondary
+because no individual descendant is observed.
+
+\section{Experimental plan}
+
+\begin{table}[ht]
+\centering
+\caption{Proposed staged experiments. Advancement requires improved held-out
+population metrics without loss of gene-level mean-shift accuracy.}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.06\linewidth}p{0.22\linewidth}p{0.28\linewidth}p{0.28\linewidth}}
+\toprule
+Stage & Model & Training objective & Decision \\
+\midrule
+0 & Existing deterministic drift & Existing CFM loss & Reproduce current checkpoint and evaluation \\
+1 & Diagonal heteroscedastic transition & OT-paired Gaussian NLL & Verify diffusion code and calibration \\
+2 & Global rank-8 diffusion & Population Sinkhorn, $M=4$, $K=4$ & Require positive skill and non-degraded mean-shift metrics \\
+3 & CRE-conditioned rank-8 diffusion & Population Sinkhorn plus moment loss & Test whether state/gene-specific uncertainty helps \\
+4 & Best SDE with $K=8,16$ and $M=8$ & Same objective & Check numerical and particle convergence \\
+5 & Optional growth head & Weighted unbalanced Sinkhorn & Proceed only if mass mismatch remains limiting \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The first full comparison should use the contiguous middle-three-stage holdout.
+Train separate adjacent, skip-1, and skip-2 models only if the rank-8 Stage 2
+model beats persistence. The observed bridge interval across the block can be
+added as a subsequent controlled factor.
+
+\section{Implementation plan}
+
+The implementation should preserve package boundaries:
+\begin{enumerate}
+  \item Add drift--diffusion output structures to the reusable model package.
+        Keep the current drift-only checkpoint path backward compatible.
+  \item Add a reusable Euler--Maruyama rollout accepting fixed Gaussian noise,
+        particle count, diffusion rank, and nonnegativity projection.
+  \item Add differentiable train-only PCA scoring and debiased Sinkhorn loss in
+        torch. Do not route model outputs through PCA.
+  \item Add an interval-stratified population sampler that returns independent
+        source and target cells rather than OT pairs.
+  \item Add fixed stochastic validation batches containing cell indices and
+        Brownian seeds. Select checkpoints by endpoint Sinkhorn EMA, with
+        moment metrics as safeguards.
+  \item Extend causal evaluation to generate multiple particles, report
+        stochastic calibration, and retain deterministic/persistence baselines.
+  \item Run synthetic tests where a branching SDE has known drift and diffusion
+        before fitting atlas data.
+\end{enumerate}
+
+The highest-risk engineering component is repeated online \uce{} evaluation
+for $B\times M$ particles. Initial rollout training should cache repeated source
+encodings where possible, use small $M$ and $K$, and profile whether \uce{} or
+the gene-conditioned drift dominates runtime. A lower-cost expression-state
+SDE can validate the training objective before enabling online \uce{}.
+
+\section{Success and stopping criteria}
+
+The stochastic model should be considered useful only if it satisfies all of
+the following on held-out stages:
+\begin{itemize}
+  \item Sinkhorn skill is consistently positive across horizons and materially
+        larger than the current one-to-two percent range;
+  \item mean-shift $R^2$ is nonnegative or improves without a compensating
+        degradation in Wasserstein distance;
+  \item performance is stable across Brownian seeds and particle counts;
+  \item learned diffusion is nonzero, bounded, and improves over both
+        drift-only and pure-diffusion controls;
+  \item improvement persists within major cell types rather than arising only
+        from global mixture smoothing.
+\end{itemize}
+
+If population-level SDE training still matches persistence, the appropriate
+conclusion is that expression snapshots and the present state representation do
+not identify the requested dynamics at this resolution. Further architecture
+sweeps would then be lower priority than lineage constraints, explicit cell
+types, perturbations, or direct proliferation information.
+
+\begin{thebibliography}{99}
+
+\bibitem{lipman2023flow}
+Lipman, Y., Chen, R. T. Q., Ben-Hamu, H., Nickel, M. \& Le, M.
+Flow Matching for Generative Modeling.
+\textit{International Conference on Learning Representations} (2023).
+\url{https://arxiv.org/abs/2210.02747}
+
+\bibitem{song2021sde}
+Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Ermon, S. \& Poole, B.
+Score-Based Generative Modeling through Stochastic Differential Equations.
+\textit{International Conference on Learning Representations} (2021).
+\url{https://arxiv.org/abs/2011.13456}
+
+\bibitem{li2020neuralsde}
+Li, X., Wong, T.-K. L., Chen, R. T. Q. \& Duvenaud, D.
+Scalable Gradients for Stochastic Differential Equations.
+\textit{International Conference on Artificial Intelligence and Statistics} (2020).
+\url{https://arxiv.org/abs/2001.01328}
+
+\bibitem{debortoli2021diffusion}
+De Bortoli, V., Thornton, J., Heng, J. \& Doucet, A.
+Diffusion Schrodinger Bridge with Applications to Score-Based Generative Modeling.
+\textit{Advances in Neural Information Processing Systems} (2021).
+\url{https://arxiv.org/abs/2106.01357}
+
+\bibitem{albergo2023stochastic}
+Albergo, M. S., Boffi, N. M. \& Vanden-Eijnden, E.
+Stochastic Interpolants: A Unifying Framework for Flows and Diffusions.
+\url{https://arxiv.org/abs/2303.08797}
+
+\bibitem{tong2024simulationfree}
+Tong, A. et al.
+Simulation-Free Schrodinger Bridges via Score and Flow Matching.
+\textit{International Conference on Artificial Intelligence and Statistics} (2024).
+\url{https://arxiv.org/abs/2307.03672}
+
+\end{thebibliography}
+
+\end{document}
