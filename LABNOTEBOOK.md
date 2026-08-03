@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-08-03
+
+- All six middle-three-stage models and causal evaluations completed without failure. Without a crossing bridge, mean 16-step Sinkhorn skill across `E13.25` forecasts to `E13.5`, `E13.75`, and `E14.0` was 0.0127/0.0151/0.0195 for adjacent/skip-1/skip-2, but mean-shift R-squared remained negative at -0.0442/-0.0621/-0.1068. Thus the slightly positive distributional score does not correspond to accurate gene-level shifts.
+- Adding the observed `E13.25` to `E14.25` bridge changed mean skill to 0.0188/0.0066/0.0075 and mean-shift R-squared to -0.1493/-0.0579/-0.0355. Bridge+skip-2 substantially improved MAE, Wasserstein-1, and R-squared relative to non-bridge skip-2, including an `E14.0` R-squared of -0.0172, but reduced Sinkhorn skill and still did not beat persistence. Bridge training lowered selected normalized validation EMA for every setting, especially skip-2 from 1.1732 to 1.0355, while all remained above the normalized zero-velocity level.
+
 ## 2026-08-02
 
 - Added matched middle-block bridge experiments. Each training set adds the observed-endpoint interval `E13.25` to `E14.25`, which crosses all three held-out stages without sampling their cells; PCA fitting and validation still exclude the block. The otherwise matched cross-attention jobs are adjacent-plus-bridge `19460159`, skip-1-plus-bridge `19460161`, and skip-2-plus-bridge `19460163`, with causal evaluations `19460160`, `19460162`, and `19460164`. This directly tests whether a long chord across the forecast gap supplies useful dynamics supervision or weakens the holdout.
