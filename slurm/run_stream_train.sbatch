@@ -11,6 +11,7 @@
 set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
 CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
+TIMEPOINT_SPLIT="${TIMEPOINT_SPLIT:-}"
 VARIANT="${VARIANT:-film}"
 STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-100}"
 EPOCHS="${EPOCHS:-}"
@@ -74,6 +75,7 @@ args=(--config "$CONFIG" --variant "$VARIANT" --steps-per-epoch "$STEPS_PER_EPOC
   --validation-ema-alpha "$VALIDATION_EMA_ALPHA" \
   --rollout-every-validations "$ROLLOUT_EVERY_VALIDATIONS" \
   --validation-rollout-steps "$VALIDATION_ROLLOUT_STEPS")
+if [[ -n "$TIMEPOINT_SPLIT" ]]; then args+=(--timepoint-split "$TIMEPOINT_SPLIT"); fi
 if [[ -n "$EPOCHS" ]]; then args+=(--epochs "$EPOCHS"); fi
 if [[ -n "$OT_METHOD" ]]; then args+=(--ot-method "$OT_METHOD"); fi
 if [[ -n "$OT_PARTIAL_MASS" ]]; then args+=(--ot-partial-mass "$OT_PARTIAL_MASS"); fi

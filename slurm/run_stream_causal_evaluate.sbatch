@@ -12,6 +12,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
+TIMEPOINT_SPLIT="${TIMEPOINT_SPLIT:-}"
 VARIANT="${VARIANT:-cross_attention}"
 OUT_DIR="${OUT_DIR:?OUT_DIR is required}"
 EXPERIMENT_LABEL="${EXPERIMENT_LABEL:?EXPERIMENT_LABEL is required}"
@@ -25,6 +26,7 @@ mkdir -p logs
 export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
 integration_steps_arg="${INTEGRATION_STEPS//;/,}"
 args=(--config "$CONFIG" --variant "$VARIANT" --out-dir "$OUT_DIR" --experiment-label "$EXPERIMENT_LABEL" --cells-per-interval "$CELLS_PER_INTERVAL" --integration-steps "$integration_steps_arg" --pca-cells "$PCA_CELLS")
+if [[ -n "$TIMEPOINT_SPLIT" ]]; then args+=(--timepoint-split "$TIMEPOINT_SPLIT"); fi
 if [[ -n "$EVAL_GENE_SUBSET" ]]; then
   eval_gene_subset_list="${EVAL_GENE_SUBSET//;/,}"
   IFS=',' read -r -a eval_gene_subsets <<< "$eval_gene_subset_list"

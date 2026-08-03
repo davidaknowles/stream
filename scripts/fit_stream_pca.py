@@ -17,6 +17,7 @@ from stream_model.denoise import fit_pca_denoiser
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
+    parser.add_argument("--timepoint-split", default=None)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--n-hvg", type=int, default=10_000)
     parser.add_argument("--output", required=True)
@@ -29,7 +30,8 @@ def main() -> None:
     apply_config_overrides(cfg, out_dir=args.out_dir, n_hvg=args.n_hvg)
     selected = pd.read_csv(cfg.out_dir / "selected_genes.csv")
     gene_ids = selected["gene_id"].astype(str).tolist()
-    with (cfg.out_dir / "timepoint_split.json").open() as handle:
+    split_path = cfg.resolve_path(args.timepoint_split) if args.timepoint_split else cfg.out_dir / "timepoint_split.json"
+    with split_path.open() as handle:
         split = json.load(handle)
     intervals = [tuple(interval) for interval in split["train_intervals"]]
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
@@ -61,6 +63,7 @@ def main() -> None:
             "split_seed": cfg.seed + 17,
             "gene_ids_sha256": hashlib.sha256("\n".join(gene_ids).encode()).hexdigest(),
             "n_genes": len(gene_ids),
+            "timepoint_split": str(split_path),
         },
     )
     print(f"Wrote {output}")

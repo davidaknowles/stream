@@ -11,6 +11,7 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-/gpfs/commons/home/daknowles/projects/stream}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 CONFIG="${CONFIG:-configs/stream_mouse_dev.yaml}"
+TIMEPOINT_SPLIT="${TIMEPOINT_SPLIT:-}"
 OUT_DIR="${OUT_DIR:-outputs/stream_hvg10000}"
 N_HVG="${N_HVG:-10000}"
 OUTPUT="${OUTPUT:-${OUT_DIR}/pca_denoiser_100pc.npz}"
@@ -19,10 +20,12 @@ PCA_FIT_CELLS="${PCA_FIT_CELLS:-10000}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
 export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
-"$STREAM_PYTHON" scripts/fit_stream_pca.py \
+args=(scripts/fit_stream_pca.py \
   --config "$CONFIG" \
   --out-dir "$OUT_DIR" \
   --n-hvg "$N_HVG" \
   --output "$OUTPUT" \
   --components "$PCA_COMPONENTS" \
-  --fit-cells "$PCA_FIT_CELLS"
+  --fit-cells "$PCA_FIT_CELLS")
+if [[ -n "$TIMEPOINT_SPLIT" ]]; then args+=(--timepoint-split "$TIMEPOINT_SPLIT"); fi
+"$STREAM_PYTHON" "${args[@]}"

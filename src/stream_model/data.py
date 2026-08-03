@@ -96,6 +96,28 @@ def incoming_heldout_intervals(days: list[str], heldout_days: set[str]) -> list[
     ]
 
 
+def heldout_block_forecast_intervals(
+    days: list[str], heldout_days: set[str]
+) -> list[tuple[str, str]]:
+    """Forecast every stage in each held-out block from its last observed predecessor."""
+
+    ordered = ordered_days(days)
+    intervals = []
+    block_start = None
+    for index, day in enumerate(ordered + [None]):
+        if day in heldout_days:
+            block_start = index if block_start is None else block_start
+            continue
+        if block_start is None:
+            continue
+        if block_start == 0:
+            raise ValueError("A held-out block cannot start at the first stage")
+        source = ordered[block_start - 1]
+        intervals.extend((source, target) for target in ordered[block_start:index])
+        block_start = None
+    return intervals
+
+
 @dataclass(frozen=True)
 class IntervalBatch:
     x0: np.ndarray

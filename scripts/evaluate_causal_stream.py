@@ -13,7 +13,7 @@ import torch
 from sklearn.decomposition import PCA
 
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.data import H5adIntervalSampler, incoming_heldout_intervals
+from stream_model.data import H5adIntervalSampler, heldout_block_forecast_intervals
 from stream_model.denoise import PCADenoiser
 from stream_model.rollout import mean_shift_metrics, projected_euler_rollout, sinkhorn_divergence
 from stream_model.train import (
@@ -59,6 +59,7 @@ def _fit_pca(sampler, train_days: list[str], total_cells: int, seed: int):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
+    parser.add_argument("--timepoint-split", default=None)
     parser.add_argument("--variant", choices=["film", "cross_attention"], default="cross_attention")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--n-hvg", type=int, default=10000)
@@ -89,10 +90,11 @@ def main() -> None:
     selected = pd.read_csv(cfg.out_dir / "selected_genes.csv")
     gene_ids = selected["gene_id"].astype(str).tolist()
     gene_sets = _load_gene_sets(gene_ids, args.eval_gene_subset, cfg)
-    with (cfg.out_dir / "timepoint_split.json").open() as handle:
+    split_path = cfg.resolve_path(args.timepoint_split) if args.timepoint_split else cfg.out_dir / "timepoint_split.json"
+    with split_path.open() as handle:
         split = json.load(handle)
     heldout = set(split["heldout_days"])
-    intervals = incoming_heldout_intervals(split["all_days"], heldout)
+    intervals = heldout_block_forecast_intervals(split["all_days"], heldout)
     if not intervals:
         raise ValueError("No observed-to-held-out intervals were found")
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
@@ -117,6 +119,9 @@ def main() -> None:
         raise ValueError("Checkpoint gene panel does not match selected_genes.csv")
     if Path(checkpoint.get("cre_token_arrays", cre_token_path)).resolve() != cre_token_path.resolve():
         raise ValueError("Checkpoint and evaluation CRE token arrays do not match")
+    checkpoint_split = checkpoint.get("validation_config", {}).get("timepoint_split")
+    if checkpoint_split and cfg.resolve_path(checkpoint_split).resolve() != split_path.resolve():
+        raise ValueError("Checkpoint and evaluation timepoint splits do not match")
     checkpoint_config = checkpoint.get("config", {})
     cfg.uce_expression_preprocessing = checkpoint_config.get("uce_expression_preprocessing", "raw")
     uce_pca = None

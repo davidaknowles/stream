@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-08-02
+
+- The complete 24-model large-bank causal matrix finished without failures. At 16 Euler steps, the best mean persistence-normalized Sinkhorn skill was only 0.00887 for cross-attention with PCA-cost OT, PCA-denoised velocity targets, and autonomous PCA-smoothed UCE input; its mean-shift R-squared remained negative at -0.0155. The target-only counterpart was nearly identical (skill 0.00864, R-squared -0.0178). Skip-1 reached 0.00835/-0.0174, while skip-2 was approximately persistence-level or worse. KNN, metacell, balanced, partial, and UOT alternatives did not establish meaningful positive dynamics prediction.
+- Added a contiguous middle-three-stage forecast using `E13.5`, `E13.75`, and `E14.0` as one held-out block. Causal evaluation forecasts all three horizons from `E13.25`; training excludes every adjacent or skipped interval whose span touches the block. A fresh train-only PCA fit is job `19459275`. Dependent cross-attention PCA-denoised/PCA-UCE training jobs are adjacent `19459276`, skip-1 `19459278`, and skip-2 `19459280`, with causal evaluations `19459277`, `19459279`, and `19459281`.
+
 ## 2026-08-01
 
 - First large-bank FiLM convergence results completed. Balanced/raw and partial/raw both stopped after 1,300 steps and selected step 100, with normalized validation EMA 1.00215 and 1.00560. PCA-cost/PCA-target denoising adjacent stopped after 3,500 steps and selected step 2,300 (1.03261); adding skip-1 stopped after 3,700 and selected step 2,500 (1.02070). Skip-1 is modestly better than adjacent-only under PCA denoising but remains worse than the normalized zero-velocity level. Final observed-interval rollout mean-shift R-squared remains negative for all four (-0.0296, -0.0358, -0.0277, and -0.0256, respectively). Their causal evaluations are eligible but waiting for GPU priority. No sweep jobs have failed.

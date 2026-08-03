@@ -8,6 +8,7 @@ from stream_model.data import (
     adjacent_intervals,
     build_time_coordinates,
     canonical_day_label,
+    heldout_block_forecast_intervals,
     incoming_heldout_intervals,
     intervals_with_skips,
 )
@@ -113,6 +114,13 @@ def test_skipped_intervals_exclude_spans_crossing_heldout_stages():
     assert ("E9.25", "E9.5") in intervals
     assert ("E8.5", "E9.25") not in intervals
     assert all("E9.0" not in days[days.index(start) : days.index(end) + 1] for start, end in intervals)
+
+
+def test_heldout_block_forecasts_all_horizons_from_last_observed_stage():
+    days = ["E8.5", "E8.75", "E9.0", "E9.25", "E9.5", "E9.75"]
+    intervals = heldout_block_forecast_intervals(days, {"E9.0", "E9.25", "E9.5"})
+
+    assert intervals == [("E8.75", "E9.0"), ("E8.75", "E9.25"), ("E8.75", "E9.5")]
 
 
 def test_time_coordinates_support_physical_days_and_relative_scaling():

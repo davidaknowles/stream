@@ -42,6 +42,7 @@ def _load_gene_subset_indices(gene_ids: list[str], subset_csv: str | None, cfg: 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/stream_mouse_dev.yaml")
+    parser.add_argument("--timepoint-split", default=None)
     parser.add_argument("--variant", choices=["standard_cfm", "film", "cross_attention"], default=None)
     parser.add_argument("--hvg-csv", default=None)
     parser.add_argument("--n-hvg", type=int, default=None)
@@ -160,7 +161,8 @@ def main() -> None:
     selected = pd.read_csv(cfg.out_dir / "selected_genes.csv")
     gene_ids = selected["gene_id"].tolist()
     loss_gene_indices = _load_gene_subset_indices(gene_ids, args.loss_gene_subset, cfg)
-    with (cfg.out_dir / "timepoint_split.json").open() as handle:
+    split_path = cfg.resolve_path(args.timepoint_split) if args.timepoint_split else cfg.out_dir / "timepoint_split.json"
+    with split_path.open() as handle:
         split = json.load(handle)
     adjacent_train_intervals = [tuple(interval) for interval in split["train_intervals"]]
     train_intervals = intervals_with_skips(
@@ -270,6 +272,7 @@ def main() -> None:
         "max_interval_skip": cfg.max_interval_skip,
         "n_train_intervals": len(train_intervals),
         "n_validation_intervals": len(adjacent_train_intervals),
+        "timepoint_split": str(split_path),
     }
 
     def save_best_checkpoint(current_model, current_optimizer, validation_row, train_rows, validation_rows):
