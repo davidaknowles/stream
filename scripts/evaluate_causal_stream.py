@@ -124,6 +124,8 @@ def main() -> None:
         raise ValueError("Checkpoint and evaluation timepoint splits do not match")
     checkpoint_config = checkpoint.get("config", {})
     cfg.uce_expression_preprocessing = checkpoint_config.get("uce_expression_preprocessing", "raw")
+    # Checkpoints predating systematic resampling retain their original multinomial UCE contract.
+    cfg.uce_sampling = checkpoint_config.get("uce_sampling", "multinomial")
     uce_pca = None
     if cfg.uce_expression_preprocessing == "pca":
         pca_artifact = checkpoint.get("pca_artifact")

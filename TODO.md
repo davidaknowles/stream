@@ -37,3 +37,10 @@ Non-adjacent endpoints can provide larger, less noise-dominated displacement tar
 - Evaluate forecasts at several horizons using contiguous held-out blocks.
 - For a held-out block, exclude every training interval whose temporal span crosses that block, even when both interval endpoints are observed. Otherwise a long training chord would weaken the intended forecasting test.
 - If long chords degrade local forecasts, progressively introduce larger gaps after fitting adjacent intervals or reduce their loss weight.
+
+## Learn Developmental Pseudotime
+
+- Infer lineage-aware pseudotime within broad annotated stages and use it as a continuous ordering variable for OT and stochastic-interpolant training.
+- Fit pseudotime on training stages only; do not use held-out-stage expression when constructing the coordinate.
+- Compare stage time, pseudotime, and pseudotime-within-stage while holding endpoint pairs and model capacity fixed.
+- Check whether pseudotime reduces multimodality within intervals and improves contiguous held-out-block forecasts over persistence.

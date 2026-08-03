@@ -78,6 +78,8 @@ def sample_uce_sentence(
     gene_metadata: UCEGeneMetadata,
     rng: np.random.Generator,
     sample_size: int = 1024,
+    sampling: str = "multinomial",
+    shuffle_chromosomes: bool = True,
 ) -> np.ndarray | None:
     """Create one UCE cell sentence from a sparse CSR row."""
 
@@ -91,13 +93,14 @@ def sample_uce_sentence(
     total = weights.sum()
     if total <= 0:
         return None
-    chosen = rng.choice(columns, size=sample_size, replace=True, p=weights / total)
+    chosen = _weighted_sample(columns, weights / total, rng, sample_size, sampling)
     chroms = gene_metadata.chrom_ids[chosen]
     sentence = np.empty(1 + sample_size + 2 * len(np.unique(chroms)), dtype=np.int64)
     sentence[0] = UCE_CLS_TOKEN
     cursor = 1
     unique_chroms = np.unique(chroms)
-    rng.shuffle(unique_chroms)  # Matches the UCE reference chromosome ordering.
+    if shuffle_chromosomes:
+        rng.shuffle(unique_chroms)  # Matches the UCE reference chromosome ordering.
     for chrom in unique_chroms:
         sentence[cursor] = UCE_CHROM_TOKEN_OFFSET + int(chrom)
         cursor += 1
@@ -158,11 +161,13 @@ class OnlineUCEEncoder:
         gene_metadata: UCEGeneMetadata,
         device: torch.device,
         sample_size: int = 1024,
+        sampling: str = "systematic",
     ):
         self.model = model.eval()
         self.gene_metadata = gene_metadata
         self.device = device
         self.sample_size = int(sample_size)
+        self.sampling = sampling
 
     def encode(self, expression: torch.Tensor | np.ndarray, seed: int) -> torch.Tensor:
         values = (
@@ -179,6 +184,8 @@ class OnlineUCEEncoder:
                 self.gene_metadata,
                 np.random.default_rng(int(seed) + row_index),
                 sample_size=self.sample_size,
+                sampling=self.sampling,
+                shuffle_chromosomes=False,
             )
             if sentence is None:
                 raise ValueError(f"Cannot encode cell {row_index}: no positive UCE-mapped expression")
@@ -195,6 +202,8 @@ def sample_dense_uce_sentence(
     gene_metadata: UCEGeneMetadata,
     rng: np.random.Generator,
     sample_size: int = 1024,
+    sampling: str = "multinomial",
+    shuffle_chromosomes: bool = True,
 ) -> np.ndarray | None:
     """Create a UCE sentence from a dense, possibly fractional count vector."""
 
@@ -206,13 +215,14 @@ def sample_dense_uce_sentence(
     total = weights.sum()
     if total <= 0:
         return None
-    chosen = rng.choice(columns, size=sample_size, replace=True, p=weights / total)
+    chosen = _weighted_sample(columns, weights / total, rng, sample_size, sampling)
     chroms = gene_metadata.chrom_ids[chosen]
     sentence = np.empty(1 + sample_size + 2 * len(np.unique(chroms)), dtype=np.int64)
     sentence[0] = UCE_CLS_TOKEN
     cursor = 1
     unique_chroms = np.unique(chroms)
-    rng.shuffle(unique_chroms)
+    if shuffle_chromosomes:
+        rng.shuffle(unique_chroms)
     for chrom in unique_chroms:
         sentence[cursor] = UCE_CHROM_TOKEN_OFFSET + int(chrom)
         cursor += 1
@@ -226,6 +236,24 @@ def sample_dense_uce_sentence(
     return sentence
 
 
+def _weighted_sample(
+    columns: np.ndarray,
+    probabilities: np.ndarray,
+    rng: np.random.Generator,
+    sample_size: int,
+    sampling: str,
+) -> np.ndarray:
+    """Sample token identities, optionally using low-variance systematic resampling."""
+
+    if sampling == "multinomial":
+        return rng.choice(columns, size=sample_size, replace=True, p=probabilities)
+    if sampling != "systematic":
+        raise ValueError("sampling must be multinomial or systematic")
+    positions = (rng.random() + np.arange(sample_size, dtype=np.float64)) / sample_size
+    indices = np.searchsorted(np.cumsum(probabilities), positions, side="right")
+    return columns[np.minimum(indices, len(columns) - 1)]
+
+
 def build_online_uce_encoder(config, selected_genes: pd.DataFrame, device: torch.device) -> OnlineUCEEncoder:
     metadata = load_uce_gene_metadata(
         selected_genes,
@@ -237,4 +265,10 @@ def build_online_uce_encoder(config, selected_genes: pd.DataFrame, device: torch
     if not metadata.valid.any():
         raise ValueError("No selected genes map to UCE tokens")
     model = load_uce_model(config.uce_dir, config.uce_checkpoint, device)
-    return OnlineUCEEncoder(model, metadata, device, sample_size=config.uce_sample_size)
+    return OnlineUCEEncoder(
+        model,
+        metadata,
+        device,
+        sample_size=config.uce_sample_size,
+        sampling=getattr(config, "uce_sampling", "systematic"),
+    )

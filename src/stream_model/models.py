@@ -49,6 +49,7 @@ class StreamModel(nn.Module):
         positional_encoding: str = "rope",
         n_context_tokens: int = 8,
         state_dim: int | None = None,
+        output_dim: int = 1,
     ):
         super().__init__()
         if variant not in {"film", "cross_attention"}:
@@ -108,7 +109,8 @@ class StreamModel(nn.Module):
             )
 
         self.norm = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, 1)
+        self.output_dim = int(output_dim)
+        self.head = nn.Linear(d_model, self.output_dim)
 
     def forward(
         self,
@@ -119,6 +121,23 @@ class StreamModel(nn.Module):
         is_promoter: torch.Tensor,
         gene_indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        promoter = self.encode_gene_features(
+            x, cre_embeddings, cre_mask, signed_distance, is_promoter, gene_indices=gene_indices
+        )
+        output = self.head(promoter)
+        return output.squeeze(-1) if self.output_dim == 1 else output
+
+    def encode_gene_features(
+        self,
+        x: torch.Tensor,
+        cre_embeddings: torch.Tensor,
+        cre_mask: torch.Tensor,
+        signed_distance: torch.Tensor,
+        is_promoter: torch.Tensor,
+        gene_indices: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return conditioned promoter features before the gene-level readout."""
+
         if gene_indices is not None:
             cre_embeddings = cre_embeddings.index_select(0, gene_indices)
             cre_mask = cre_mask.index_select(0, gene_indices)
@@ -142,8 +161,7 @@ class StreamModel(nn.Module):
                 attn_out, _ = self.cross_attn[layer_index](q, context, context, need_weights=False)
                 h = (q + attn_out).reshape(batch_size, n_genes, n_tokens, self.d_model)
             h = h.masked_fill(padding_mask[None, :, :, None], 0.0)
-        promoter = self.norm(h[:, :, 0, :])
-        return self.head(promoter).squeeze(-1)
+        return self.norm(h[:, :, 0, :])
 
     def embed_cre(
         self,
@@ -164,6 +182,37 @@ class StreamModel(nn.Module):
         padding_mask = ~cre_mask.bool()
         return h.masked_fill(padding_mask.unsqueeze(-1), 0.0), padding_mask
 
+
+class ScoreFlowStreamModel(nn.Module):
+    """STREAM with per-gene flow and standardized-score heads.
+
+    ``tau`` is stochastic-interpolant path position, not developmental time.
+    """
+
+    def __init__(self, *, state_dim: int, time_dim: int = 32, **stream_kwargs):
+        super().__init__()
+        if time_dim < 4 or time_dim % 2:
+            raise ValueError("time_dim must be an even integer of at least four")
+        self.time_dim = time_dim
+        d_model = int(stream_kwargs.get("d_model", 256))
+        self.time_mlp = nn.Sequential(nn.Linear(time_dim, d_model), nn.SiLU(), nn.Linear(d_model, 2 * d_model))
+        self.stream = StreamModel(state_dim=state_dim, output_dim=1, **stream_kwargs)
+        self.stream.head = nn.Identity()
+        self.flow_head = nn.Linear(d_model, 1)
+        self.score_head = nn.Linear(d_model, 1)
+
+    def forward(self, state: torch.Tensor, tau: torch.Tensor, **cre_inputs) -> torch.Tensor:
+        tau = tau.reshape(-1, 1)
+        frequencies = torch.exp(
+            torch.linspace(0.0, -6.0, self.time_dim // 2, device=tau.device, dtype=tau.dtype)
+        )
+        angles = 2.0 * torch.pi * tau * frequencies
+        gamma, beta = self.time_mlp(torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)).chunk(2, dim=1)
+        features = self.stream.encode_gene_features(state, **cre_inputs)
+        flow = self.flow_head(features).squeeze(-1)
+        score_features = features * (1.0 + gamma[:, None, :]) + beta[:, None, :]
+        noise = self.score_head(score_features).squeeze(-1)
+        return torch.stack([flow, noise], dim=-1)
 
 def apply_rope(x: torch.Tensor, positions: torch.Tensor, base: float = 10_000.0) -> torch.Tensor:
     """Apply RoPE to token features using signed genomic positions."""

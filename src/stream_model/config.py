@@ -46,6 +46,7 @@ class StreamConfig:
     uce_species_offsets: Path = Path("outputs/uce/assets/species_offsets.pkl")
     uce_species: str = "mouse"
     uce_sample_size: int = 1024
+    uce_sampling: str = "systematic"
     batch_size: int = 64
     gene_chunk_size: int = 512
     ot_epsilon: float = 0.05
@@ -81,6 +82,11 @@ class StreamConfig:
     n_context_tokens: int = 8
     dropout: float = 0.1
     positional_encoding: str = "rope"
+
+    score_flow_noise_scale: float = 0.2
+    score_flow_tau_min: float = 0.02
+    score_flow_score_weight: float = 1.0
+    score_flow_time_dim: int = 32
 
     seed: int = 1337
     device: str = "cuda"

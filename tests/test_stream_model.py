@@ -713,6 +713,76 @@ def test_dense_uce_sentence_accepts_fractional_counts_and_is_reproducible():
     assert len(first) >= 17
 
 
+def test_systematic_uce_sampling_has_lower_count_variance():
+    from stream_model.uce import UCEGeneMetadata, sample_dense_uce_sentence
+
+    metadata = UCEGeneMetadata(
+        token_ids=np.array([10, 11, 12, 13]),
+        chrom_ids=np.zeros(4, dtype=np.int64),
+        starts=np.arange(4),
+    )
+    values = np.array([1.0, 2.0, 4.0, 8.0])
+
+    def token_counts(mode):
+        rows = []
+        for seed in range(100):
+            sentence = sample_dense_uce_sentence(
+                values,
+                metadata,
+                np.random.default_rng(seed),
+                sample_size=64,
+                sampling=mode,
+                shuffle_chromosomes=False,
+            )
+            rows.append([np.count_nonzero(sentence == token) for token in metadata.token_ids])
+        return np.asarray(rows)
+
+    assert token_counts("systematic").var(axis=0).mean() < token_counts("multinomial").var(axis=0).mean() * 0.1
+
+
+def test_score_flow_interpolant_and_model_shapes():
+    torch = pytest.importorskip("torch")
+    from stream_model.models import ScoreFlowStreamModel
+    from stream_model.score_flow import score_flow_loss, stochastic_interpolant
+
+    x0 = torch.tensor([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]])
+    x1 = x0 + 1.0
+    scale = torch.ones(3)
+    xt, flow, noise, tau = stochastic_interpolant(
+        x0, x1, scale, 0.0, 0.5, tau=torch.full((2, 1), 0.5), noise=torch.zeros_like(x0)
+    )
+    assert torch.allclose(xt, (x0 + x1) / 2)
+    assert torch.allclose(flow, torch.full_like(x0, 2.0))
+
+    model = ScoreFlowStreamModel(
+        n_genes=3,
+        cre_dim=4,
+        d_model=8,
+        n_heads=2,
+        n_layers=1,
+        state_dim=5,
+        time_dim=4,
+    )
+    cre = {
+        "cre_embeddings": torch.randn(3, 2, 4),
+        "cre_mask": torch.ones(3, 2, dtype=torch.bool),
+        "signed_distance": torch.zeros(3, 2),
+        "is_promoter": torch.tensor([[1, 0]]).expand(3, -1),
+    }
+    prediction = model(torch.randn(2, 5), tau, **cre)
+    assert prediction.shape == (2, 3, 2)
+    loss, metrics = score_flow_loss(prediction, flow, noise, torch.ones(3))
+    assert loss.ndim == 0
+    assert set(metrics) == {"loss", "flow_loss_normalized", "score_noise_mse"}
+
+    model.eval()
+    state = torch.randn(2, 5)
+    early = model(state, torch.full((2, 1), 0.2), **cre)
+    late = model(state, torch.full((2, 1), 0.8), **cre)
+    assert torch.allclose(early[..., 0], late[..., 0])
+    assert not torch.allclose(early[..., 1], late[..., 1])
+
+
 def test_projected_euler_rollout_is_autonomous_and_nonnegative():
     torch = pytest.importorskip("torch")
     from stream_model.rollout import projected_euler_rollout
