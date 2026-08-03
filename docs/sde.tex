@@ -37,10 +37,12 @@ prediction remains close to expression persistence. This proposal replaces the
 deterministic ordinary differential equation with a neural stochastic
 differential equation and trains predicted populations directly against
 observed endpoint populations. The drift remains a per-gene,
-regulatory-sequence-conditioned velocity. A low-rank diffusion term represents
-branching and unresolved fate variation. The recommended objective is a
-reparameterized, simulation-based Sinkhorn divergence that does not require
-individual cross-time cell pairs. We define the model, objective,
+regulatory-sequence-conditioned velocity. A score head and prescribed
+diffusion represent branching and unresolved fate variation. The recommended
+first objective is simulation-free score-and-flow matching on noisy stochastic
+interpolants sampled from an entropic endpoint coupling. A complementary
+population-level objective directly minimizes endpoint Sinkhorn divergence by
+reparameterized SDE rollout. We define both objectives, their assumptions,
 regularization, evaluation, implementation stages, and decision criteria for a
 focused stochastic-flow ablation.
 \end{abstract}
@@ -176,7 +178,110 @@ parameter gradients. This avoids claiming differentiability through discrete
 \uce{} tokenization. Fixed random seeds should be used within each optimization
 step to reduce gradient variance.
 
-\section{Recommended population-level objective}
+\section{Recommended first approach: score-and-flow matching}
+
+Simulation-free score-and-flow matching avoids backpropagation through
+multi-step stochastic rollouts and repeated online \uce{} evaluations. Given
+coupled endpoints $(x_0,x_1)$, define the noisy stochastic interpolant
+\begin{equation}
+  X_\tau
+  = (1-\tau)x_0+\tau x_1+\gamma(\tau)z,
+  \qquad z\sim\N(0,I),
+  \qquad \tau\sim\operatorname{Uniform}(0,1),
+  \label{eq:stochastic-interpolant}
+\end{equation}
+where $\gamma(0)=\gamma(1)=0$. One possible schedule is
+$\gamma(\tau)=\sigma\sqrt{\tau(1-\tau)}$, with endpoint clipping or a smooth
+bounded alternative used to avoid numerical singularities.
+
+\subsection{Flow-matching head}
+
+The marginal flow field is learned by conditional regression:
+\begin{align}
+  b_\theta(x,\tau)
+  &\approx \E[\dot X_\tau\mid X_\tau=x], \\
+  \dot X_\tau
+  &= (x_1-x_0)+\dot\gamma(\tau)z, \\
+  \mathcal L_{\mathrm{flow}}
+  &= \E\left[
+       \left\|b_\theta(X_\tau,\tau)-\dot X_\tau\right\|_2^2
+     \right].
+  \label{eq:stochastic-flow-loss}
+\end{align}
+For physical developmental intervals, the target is divided by the interval
+duration. As in the current model, $b_{\theta,g}$ is one expression-valued
+output per gene.
+
+\subsection{Score-matching head}
+
+The score of the interpolant marginal is
+\begin{equation}
+  s_\phi(x,\tau)\approx\nabla_x\log p_\tau(x).
+\end{equation}
+Because Equation~\ref{eq:stochastic-interpolant} adds Gaussian noise, the score
+can be trained by denoising regression:
+\begin{equation}
+  \mathcal L_{\mathrm{score}}
+  = \E\left[
+      w(\tau)
+      \left\|
+        s_\phi(X_\tau,\tau)+\frac{z}{\gamma(\tau)}
+      \right\|_2^2
+    \right].
+  \label{eq:score-loss}
+\end{equation}
+Choosing $w(\tau)=\gamma(\tau)^2$ prevents the endpoint singularity from
+dominating optimization. Flow and score heads can share the regulatory token
+transformer:
+\begin{align}
+  b_{\theta,g}(x,\tau)
+  &= \operatorname{STREAM}^{\mathrm{flow}}_g
+     \!\left(E(x),Z_g,\tau\right), \\
+  s_{\phi,g}(x,\tau)
+  &= \operatorname{STREAM}^{\mathrm{score}}_g
+     \!\left(E(x),Z_g,\tau\right).
+\end{align}
+
+\subsection{SDE induced by the matched fields}
+
+If $b_\theta$ satisfies the continuity equation and $s_\phi$ estimates the
+marginal score, then the fields define the SDE
+\begin{equation}
+  \dd X_\tau
+  = \left[
+      b_\theta(X_\tau,\tau)
+      + \kappa(\tau)s_\phi(X_\tau,\tau)
+    \right]\dd\tau
+    + \sqrt{2\kappa(\tau)}\,\dd W_\tau.
+  \label{eq:score-flow-sde}
+\end{equation}
+The score correction offsets diffusion in the Fokker--Planck equation, so an
+exact model has the prescribed interpolant marginals for any nonnegative
+diffusion schedule $\kappa$. Varying $\kappa$ therefore controls stochasticity
+without changing the ideal endpoint distribution. Setting $\kappa=0$ recovers
+the probability-flow ODE and provides a matched deterministic control.
+
+\subsection{Entropic endpoint coupling}
+
+Equation~\ref{eq:stochastic-interpolant} still requires a joint endpoint
+distribution. Independent pairing creates unnecessarily broad paths, while a
+nearly deterministic OT plan recreates the current arbitrary-pair problem. The
+recommended compromise is an entropic OT or KL-relaxed UOT coupling. Sampling
+many endpoint pairs from its nonzero support exposes the model to multiple
+plausible descendants. This is the simulation-free Schrodinger bridge matching
+construction described in related work
+\cite{albergo2023stochastic,tong2024simulationfree}.
+
+This approach is simulation-free during fitting: sample an endpoint pair,
+$\tau$, and $z$, then regress analytic flow and score targets. It is therefore
+well suited to frozen, partly discrete online \uce{} preprocessing. Its main
+cost is conceptual: the network must receive $\tau$, because bridge noise and
+drift change along the interpolation. Here $\tau$ is a local mathematical path
+coordinate, not an absolute developmental stage label. Nevertheless, a model
+conditioned on $\tau$ is not strictly autonomous in the sense used by the
+current no-time-conditioning experiments.
+
+\section{Complementary population-level objective}
 
 Let $\{x_i^0\}_{i=1}^{B}$ be source cells and
 $\{x_j^1\}_{j=1}^{B_1}$ an independently sampled target population. Generate
@@ -246,16 +351,7 @@ objective inherits arbitrary OT pairing and can reward inflated variance. It
 should be treated as an implementation smoke test and baseline, not the main
 stochastic-flow result.
 
-\section{Alternatives not recommended for the first test}
-
-\paragraph{Noisy conditional flow matching.}
-One can sample noisy Brownian-bridge interpolants around OT pairs and regress a
-time-dependent bridge drift. This is closely related to stochastic
-interpolants and simulation-free Schrodinger bridges
-\cite{albergo2023stochastic,tong2024simulationfree}. It requires the
-interpolation coordinate as an explicit model input and continues to rely on
-cross-time couplings. It is therefore less direct for the current autonomous,
-no-time-conditioning question.
+\section{Other alternatives}
 
 \paragraph{Iterative Schrodinger bridge fitting.}
 Iterative proportional fitting can learn forward and backward stochastic
@@ -317,27 +413,37 @@ population metrics without loss of gene-level mean-shift accuracy.}
 Stage & Model & Training objective & Decision \\
 \midrule
 0 & Existing deterministic drift & Existing CFM loss & Reproduce current checkpoint and evaluation \\
-1 & Diagonal heteroscedastic transition & OT-paired Gaussian NLL & Verify diffusion code and calibration \\
-2 & Global rank-8 diffusion & Population Sinkhorn, $M=4$, $K=4$ & Require positive skill and non-degraded mean-shift metrics \\
-3 & CRE-conditioned rank-8 diffusion & Population Sinkhorn plus moment loss & Test whether state/gene-specific uncertainty helps \\
-4 & Best SDE with $K=8,16$ and $M=8$ & Same objective & Check numerical and particle convergence \\
+1 & Score-and-flow STREAM & Entropic-coupling flow and denoising-score regression & Verify analytic targets and endpoint marginals \\
+2 & Matched SDE and ODE & Vary $\kappa$; disable score at inference & Require positive skill and a specific stochastic benefit \\
+3 & Global rank-8 autonomous diffusion & Population Sinkhorn, $M=4$, $K=4$ & Compare simulation-free and rollout-trained objectives \\
+4 & CRE-conditioned rank-8 diffusion & Population Sinkhorn plus moment loss & Test state/gene-specific uncertainty \\
 5 & Optional growth head & Weighted unbalanced Sinkhorn & Proceed only if mass mismatch remains limiting \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The first full comparison should use the contiguous middle-three-stage holdout.
-Train separate adjacent, skip-1, and skip-2 models only if the rank-8 Stage 2
-model beats persistence. The observed bridge interval across the block can be
-added as a subsequent controlled factor.
+Train separate adjacent, skip-1, and skip-2 models only if Stage 1 beats
+persistence. The observed bridge interval across the block can be added as a
+subsequent controlled factor. Because Stage 1 is time-dependent while Stage 3
+is autonomous, conclusions must distinguish improved stochastic modeling from
+the additional interpolation-coordinate input.
 
 \section{Implementation plan}
 
 The implementation should preserve package boundaries:
 \begin{enumerate}
-  \item Add drift--diffusion output structures to the reusable model package.
-        Keep the current drift-only checkpoint path backward compatible.
-  \item Add a reusable Euler--Maruyama rollout accepting fixed Gaussian noise,
+  \item Add shared flow and score heads to the reusable model package, together
+        with a local interpolation-coordinate embedding. Keep current
+        drift-only checkpoints backward compatible.
+  \item Add a stochastic-interpolant sampler returning entropically coupled
+        endpoints, $\tau$, Gaussian noise, and analytic flow/score targets.
+  \item Add weighted flow and score losses, with tests against analytic
+        Gaussian bridges and known marginal scores.
+  \item Add a reusable SDE rollout for Equation~\ref{eq:score-flow-sde}, plus a
+        probability-flow ODE mode with $\kappa=0$.
+  \item Add an autonomous drift--diffusion output path and a reusable
+        Euler--Maruyama rollout accepting fixed Gaussian noise,
         particle count, diffusion rank, and nonnegativity projection.
   \item Add differentiable train-only PCA scoring and debiased Sinkhorn loss in
         torch. Do not route model outputs through PCA.
