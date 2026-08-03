@@ -120,7 +120,7 @@ def main() -> None:
             "model": current_model.state_dict(),
             "optimizer": current_optimizer.state_dict(),
             "config": cfg.to_dict(),
-            "model_contract": "online_uce_score_flow_v1",
+            "model_contract": "online_uce_coupled_score_flow_v2",
             "gene_ids": gene_ids,
             "cre_token_arrays": str(cre_path),
             "timepoint_split": str(split_path),

@@ -86,6 +86,7 @@ class StreamConfig:
     score_flow_noise_scale: float = 0.2
     score_flow_tau_min: float = 0.02
     score_flow_score_weight: float = 1.0
+    score_flow_autonomous_weight: float = 1.0
     score_flow_time_dim: int = 32
 
     seed: int = 1337

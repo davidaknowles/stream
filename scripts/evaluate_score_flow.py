@@ -35,8 +35,8 @@ def main() -> None:
 
     checkpoint_path = StreamConfig().resolve_path(args.checkpoint)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    if checkpoint.get("model_contract") != "online_uce_score_flow_v1":
-        raise ValueError("Expected online_uce_score_flow_v1 checkpoint")
+    if checkpoint.get("model_contract") != "online_uce_coupled_score_flow_v2":
+        raise ValueError("Expected online_uce_coupled_score_flow_v2 checkpoint")
     saved = checkpoint["config"]
     cfg = StreamConfig.from_yaml(args.config)
     apply_config_overrides(cfg, out_dir=args.out_dir, n_hvg=len(checkpoint["gene_ids"]), cell_state="uce", uce_mode="online")
@@ -100,7 +100,14 @@ def main() -> None:
             state = encoder.encode(current_x, seed)
             return predict_score_flow_chunked(model, state, tau, cre_inputs, cfg.gene_chunk_size)
 
-        for diffusion in diffusions:
+        controls = [("autonomous", "not_used", 0.0), ("coupled", "not_used", 0.0)]
+        controls.extend(
+            ("coupled", score_control, diffusion)
+            for diffusion in diffusions
+            if diffusion > 0
+            for score_control in ("learned", "zero")
+        )
+        for dynamics_mode, score_control, diffusion in controls:
             replicates = 1 if diffusion == 0 else args.stochastic_replicates
             replicate_rows = []
             for replicate in range(replicates):
@@ -115,6 +122,8 @@ def main() -> None:
                     seed,
                     diffusion=diffusion,
                     noise_amplitude=cfg.score_flow_noise_scale,
+                    dynamics_mode=dynamics_mode,
+                    score_control="learned" if score_control == "not_used" else score_control,
                 ).cpu().numpy()
                 endpoint = sinkhorn_divergence(pca.transform_counts(predicted), observed_pca, epsilon=0.05)
                 replicate_rows.append(
@@ -129,6 +138,8 @@ def main() -> None:
                 "day1": day1,
                 "variant": cfg.model_variant,
                 "endpoint_denoising": saved["endpoint_denoising"],
+                "dynamics_mode": dynamics_mode,
+                "score_control": score_control,
                 "diffusion": diffusion,
                 "integration_steps": args.steps,
                 "n_replicates": replicates,

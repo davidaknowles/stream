@@ -184,7 +184,7 @@ class StreamModel(nn.Module):
 
 
 class ScoreFlowStreamModel(nn.Module):
-    """STREAM with per-gene flow and standardized-score heads.
+    """STREAM with autonomous and coupled stochastic-interpolant readouts.
 
     ``tau`` is stochastic-interpolant path position, not developmental time.
     """
@@ -198,8 +198,9 @@ class ScoreFlowStreamModel(nn.Module):
         self.time_mlp = nn.Sequential(nn.Linear(time_dim, d_model), nn.SiLU(), nn.Linear(d_model, 2 * d_model))
         self.stream = StreamModel(state_dim=state_dim, output_dim=1, **stream_kwargs)
         self.stream.head = nn.Identity()
-        self.flow_head = nn.Linear(d_model, 1)
-        self.score_head = nn.Linear(d_model, 1)
+        self.autonomous_velocity_head = nn.Linear(d_model, 1)
+        self.conditional_velocity_head = nn.Linear(d_model, 1)
+        self.noise_head = nn.Linear(d_model, 1)
 
     def forward(self, state: torch.Tensor, tau: torch.Tensor, **cre_inputs) -> torch.Tensor:
         tau = tau.reshape(-1, 1)
@@ -209,10 +210,11 @@ class ScoreFlowStreamModel(nn.Module):
         angles = 2.0 * torch.pi * tau * frequencies
         gamma, beta = self.time_mlp(torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)).chunk(2, dim=1)
         features = self.stream.encode_gene_features(state, **cre_inputs)
-        flow = self.flow_head(features).squeeze(-1)
-        score_features = features * (1.0 + gamma[:, None, :]) + beta[:, None, :]
-        noise = self.score_head(score_features).squeeze(-1)
-        return torch.stack([flow, noise], dim=-1)
+        conditional_features = features * (1.0 + gamma[:, None, :]) + beta[:, None, :]
+        autonomous_velocity = self.autonomous_velocity_head(features).squeeze(-1)
+        conditional_velocity = self.conditional_velocity_head(conditional_features).squeeze(-1)
+        noise = self.noise_head(conditional_features).squeeze(-1)
+        return torch.stack([autonomous_velocity, conditional_velocity, noise], dim=-1)
 
 def apply_rope(x: torch.Tensor, positions: torch.Tensor, base: float = 10_000.0) -> torch.Tensor:
     """Apply RoPE to token features using signed genomic positions."""

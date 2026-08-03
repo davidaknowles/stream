@@ -70,6 +70,15 @@ but mean-shift $R^2$ is still negative. A long observed-endpoint chord across
 the held-out block improves some mean-shift errors without producing a
 consistent distributional improvement.
 
+An initial score-and-flow implementation with an autonomous flow head and an
+independent $\tau$-conditioned score head also failed. Validation denoising MSE
+remained approximately one, the null value for standardized Gaussian noise,
+under raw, KNN-smoothed, and metacell-smoothed targets. Diffusion improved
+Sinkhorn distance while worsening gene-level mean shifts, but this could not be
+attributed to a learned score. This result motivates the coupled
+conditional-moment parameterization below and an explicit zero-score diffusion
+control.
+
 These results suggest that the main limitation is not simply model capacity.
 Cross-sectional OT does not identify a unique descendant for each source cell,
 development branches, and cell numbers change through proliferation and death.
@@ -85,7 +94,9 @@ training against endpoint distributions improves causal forecasting over
 persistence. The first stochastic model should therefore:
 \begin{itemize}
   \item retain gene-valued drift and the existing \uce{}/\cre{} conditioning;
-  \item remain autonomous, with no explicit developmental-time input;
+  \item exclude absolute developmental-time labels from the state model;
+  \item compare a strictly autonomous drift with a bridge model conditioned
+        only on the local interpolation coordinate $\tau$;
   \item avoid requiring one-to-one cross-time cell pairs in the primary loss;
   \item generate multiple descendants per source cell;
   \item optimize the same type of endpoint discrepancy used for evaluation;
@@ -185,7 +196,7 @@ multi-step stochastic rollouts and repeated online \uce{} evaluations. Given
 coupled endpoints $(x_0,x_1)$, define the noisy stochastic interpolant
 \begin{equation}
   X_\tau
-  = (1-\tau)x_0+\tau x_1+\gamma(\tau)z,
+  = (1-\tau)x_0+\tau x_1+\gamma(\tau)\Sigma z,
   \qquad z\sim\N(0,I),
   \qquad \tau\sim\operatorname{Uniform}(0,1),
   \label{eq:stochastic-interpolant}
@@ -194,65 +205,69 @@ where $\gamma(0)=\gamma(1)=0$. One possible schedule is
 $\gamma(\tau)=\sigma\sqrt{\tau(1-\tau)}$, with endpoint clipping or a smooth
 bounded alternative used to avoid numerical singularities.
 
-\subsection{Flow-matching head}
+Here $\Sigma$ is a fixed diagonal matrix of training-only per-gene expression
+scales. It makes perturbations comparable across genes while retaining
+gene-valued states and outputs.
 
-The marginal flow field is learned by conditional regression:
+\subsection{Coupled conditional-moment heads}
+
+The flow and score must not be unrelated readouts. Define two shared
+$\tau$-conditioned conditional moments,
+\begin{align}
+  u_\theta(x,\tau)
+  &\approx \E[(x_1-x_0)/\Delta t\mid X_\tau=x], \\
+  e_\theta(x,\tau)
+  &\approx \E[z\mid X_\tau=x].
+  \label{eq:conditional-moments}
+\end{align}
+Both are predicted from the same time-modulated promoter features. The same
+noise estimate $e_\theta$ then constructs both fields:
 \begin{align}
   b_\theta(x,\tau)
-  &\approx \E[\dot X_\tau\mid X_\tau=x], \\
-  \dot X_\tau
-  &= (x_1-x_0)+\dot\gamma(\tau)z, \\
-  \mathcal L_{\mathrm{flow}}
-  &= \E\left[
-       \left\|b_\theta(X_\tau,\tau)-\dot X_\tau\right\|_2^2
-     \right].
-  \label{eq:stochastic-flow-loss}
+  &=u_\theta(x,\tau)
+    +\frac{\dot\gamma(\tau)}{\Delta t}\Sigma e_\theta(x,\tau), \\
+  s_\theta(x,\tau)
+  &=-\Sigma^{-1}\frac{e_\theta(x,\tau)}{\gamma(\tau)}.
+  \label{eq:coupled-fields}
 \end{align}
-For physical developmental intervals, the target is divided by the interval
-duration. As in the current model, $b_{\theta,g}$ is one expression-valued
-output per gene.
-
-\subsection{Score-matching head}
-
-The score of the interpolant marginal is
+Thus the noise contribution to the flow and the score cannot disagree without
+increasing the same noise-regression loss. The objective is
 \begin{equation}
-  s_\phi(x,\tau)\approx\nabla_x\log p_\tau(x).
+  \mathcal L_{\mathrm{coupled}}
+  =\E\left[
+    \left\|\frac{b_\theta(X_\tau,\tau)-\dot X_\tau}{v_{\mathrm{rms}}}\right\|_2^2
+    +\lambda_s\left\|e_\theta(X_\tau,\tau)-z\right\|_2^2
+  \right],
+  \label{eq:coupled-loss}
 \end{equation}
-Because Equation~\ref{eq:stochastic-interpolant} adds Gaussian noise, the score
-can be trained by denoising regression:
+where $\dot X_\tau=(x_1-x_0)/\Delta t+\dot\gamma(\tau)\Sigma
+z/\Delta t$. Predicting standardized noise is equivalent to a
+$\gamma(\tau)^2$-weighted score loss and avoids endpoint singularities.
+The normalizer $v_{\mathrm{rms}}$ combines the training-only endpoint-velocity
+RMS with the analytic RMS of the bridge-noise term, preventing intermediate
+noise levels from dominating the coupled loss.
+
+The same checkpoint contains a strictly autonomous control,
 \begin{equation}
-  \mathcal L_{\mathrm{score}}
-  = \E\left[
-      w(\tau)
-      \left\|
-        s_\phi(X_\tau,\tau)+\frac{z}{\gamma(\tau)}
-      \right\|_2^2
-    \right].
-  \label{eq:score-loss}
+  b^{\mathrm{aut}}_{\theta,g}(x)
+  =\operatorname{STREAM}^{\mathrm{aut}}_{\theta,g}(E(x),Z_g),
 \end{equation}
-Choosing $w(\tau)=\gamma(\tau)^2$ prevents the endpoint singularity from
-dominating optimization. Flow and score heads can share the regulatory token
-transformer:
-\begin{align}
-  b_{\theta,g}(x,\tau)
-  &= \operatorname{STREAM}^{\mathrm{flow}}_g
-     \!\left(E(x),Z_g,\tau\right), \\
-  s_{\phi,g}(x,\tau)
-  &= \operatorname{STREAM}^{\mathrm{score}}_g
-     \!\left(E(x),Z_g,\tau\right).
-\end{align}
+trained against $(x_1-x_0)/\Delta t$ before applying the $\tau$ modulation.
+This isolates the value of the local bridge coordinate from architecture and
+endpoint samples. Absolute developmental time is supplied to neither path.
 
 \subsection{SDE induced by the matched fields}
 
-If $b_\theta$ satisfies the continuity equation and $s_\phi$ estimates the
+If $b_\theta$ satisfies the continuity equation and $s_\theta$ estimates the
 marginal score, then the fields define the SDE
 \begin{equation}
-  \dd X_\tau
+  \dd X_t
   = \left[
-      b_\theta(X_\tau,\tau)
-      + \kappa(\tau)s_\phi(X_\tau,\tau)
-    \right]\dd\tau
-    + \sqrt{2\kappa(\tau)}\,\dd W_\tau.
+      b_\theta(X_t,\tau(t))
+      + \kappa(t)\Sigma^2s_\theta(X_t,\tau(t))
+    \right]\dd t
+    + \sqrt{2\kappa(t)}\Sigma\,\dd W_t,
+  \qquad \tau(t)=\frac{t-t_0}{t_1-t_0}.
   \label{eq:score-flow-sde}
 \end{equation}
 The score correction offsets diffusion in the Fokker--Planck equation, so an
@@ -260,6 +275,9 @@ exact model has the prescribed interpolant marginals for any nonnegative
 diffusion schedule $\kappa$. Varying $\kappa$ therefore controls stochasticity
 without changing the ideal endpoint distribution. Setting $\kappa=0$ recovers
 the probability-flow ODE and provides a matched deterministic control.
+For every positive $\kappa$, evaluation also sets the score correction to zero
+while retaining identical Brownian draws. This distinguishes a learned-score
+benefit from generic variance broadening.
 
 \subsection{Entropic endpoint coupling}
 
@@ -390,7 +408,10 @@ fixed seeds. Report:
   \item endpoint covariance error in train-only PCA space;
   \item coverage and calibration of observed cells under generated particles;
   \item metrics stratified by annotated cell type or lineage where available;
-  \item diffusion-disabled rollout from the same checkpoint;
+  \item the autonomous ODE and coupled probability-flow ODE from the same
+        checkpoint;
+  \item matched stochastic rollouts with learned versus zero score correction
+        and identical Brownian seeds;
   \item sensitivity to particle count and integration steps.
 \end{itemize}
 
@@ -433,13 +454,14 @@ the additional interpolation-coordinate input.
 
 The implementation should preserve package boundaries:
 \begin{enumerate}
-  \item Add shared flow and score heads to the reusable model package, together
-        with a local interpolation-coordinate embedding. Keep current
+  \item Add an autonomous velocity readout and shared $\tau$-conditioned
+        velocity/noise readouts to the reusable model package. Construct flow
+        and score analytically from the same noise prediction. Keep current
         drift-only checkpoints backward compatible.
   \item Add a stochastic-interpolant sampler returning entropically coupled
         endpoints, $\tau$, Gaussian noise, and analytic flow/score targets.
-  \item Add weighted flow and score losses, with tests against analytic
-        Gaussian bridges and known marginal scores.
+  \item Add the coupled flow/noise loss, with tests against analytic Gaussian
+        bridges, known marginal scores, and the zero-score SDE control.
   \item Add a reusable SDE rollout for Equation~\ref{eq:score-flow-sde}, plus a
         probability-flow ODE mode with $\kappa=0$.
   \item Add an autonomous drift--diffusion output path and a reusable

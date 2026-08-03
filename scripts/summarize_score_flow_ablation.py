@@ -12,8 +12,8 @@ import pandas as pd
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="outputs/stream_hvg10000")
-    parser.add_argument("--pattern", default="causal_eval_model_score_flow_*_mid3_*_systematic.csv")
-    parser.add_argument("--output", default="score_flow_ablation_summary.csv")
+    parser.add_argument("--pattern", default="causal_eval_model_score_flow_*_coupled_v2.csv")
+    parser.add_argument("--output", default="score_flow_coupled_ablation_summary.csv")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -29,7 +29,10 @@ def main() -> None:
         "mean_gene_wasserstein1",
     ]
     summary = (
-        frame.groupby(["variant", "endpoint_denoising", "diffusion"], as_index=False)[metrics]
+        frame.groupby(
+            ["variant", "endpoint_denoising", "dynamics_mode", "score_control", "diffusion"],
+            as_index=False,
+        )[metrics]
         .mean()
         .sort_values("sinkhorn_skill", ascending=False)
     )

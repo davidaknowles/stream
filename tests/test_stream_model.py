@@ -743,16 +743,16 @@ def test_systematic_uce_sampling_has_lower_count_variance():
 def test_score_flow_interpolant_and_model_shapes():
     torch = pytest.importorskip("torch")
     from stream_model.models import ScoreFlowStreamModel
-    from stream_model.score_flow import score_flow_loss, stochastic_interpolant
+    from stream_model.score_flow import coupled_score_flow_fields, score_flow_loss, stochastic_interpolant
 
     x0 = torch.tensor([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]])
     x1 = x0 + 1.0
     scale = torch.ones(3)
-    xt, flow, noise, tau = stochastic_interpolant(
+    xt, velocity, noise, tau = stochastic_interpolant(
         x0, x1, scale, 0.0, 0.5, tau=torch.full((2, 1), 0.5), noise=torch.zeros_like(x0)
     )
     assert torch.allclose(xt, (x0 + x1) / 2)
-    assert torch.allclose(flow, torch.full_like(x0, 2.0))
+    assert torch.allclose(velocity, torch.full_like(x0, 2.0))
 
     model = ScoreFlowStreamModel(
         n_genes=3,
@@ -770,17 +770,62 @@ def test_score_flow_interpolant_and_model_shapes():
         "is_promoter": torch.tensor([[1, 0]]).expand(3, -1),
     }
     prediction = model(torch.randn(2, 5), tau, **cre)
-    assert prediction.shape == (2, 3, 2)
-    loss, metrics = score_flow_loss(prediction, flow, noise, torch.ones(3))
+    assert prediction.shape == (2, 3, 3)
+    loss, metrics = score_flow_loss(
+        prediction, velocity, noise, torch.ones(3), tau, scale, 0.5, 0.2
+    )
     assert loss.ndim == 0
-    assert set(metrics) == {"loss", "flow_loss_normalized", "score_noise_mse"}
+    assert set(metrics) == {
+        "loss",
+        "autonomous_velocity_loss_normalized",
+        "coupled_flow_loss_normalized",
+        "score_noise_mse",
+    }
 
     model.eval()
     state = torch.randn(2, 5)
     early = model(state, torch.full((2, 1), 0.2), **cre)
     late = model(state, torch.full((2, 1), 0.8), **cre)
     assert torch.allclose(early[..., 0], late[..., 0])
-    assert not torch.allclose(early[..., 1], late[..., 1])
+    assert not torch.allclose(early[..., 1:], late[..., 1:])
+
+    exact_prediction = torch.stack([velocity, velocity, noise], dim=-1)
+    exact_loss, _ = score_flow_loss(
+        exact_prediction, velocity, noise, torch.ones(3), tau, scale, 0.5, 0.2
+    )
+    assert exact_loss == pytest.approx(0.0)
+    autonomous, coupled, standardized_score = coupled_score_flow_fields(
+        exact_prediction, tau, scale, 0.5, 0.2
+    )
+    assert torch.allclose(autonomous, velocity)
+    assert torch.allclose(coupled, velocity)
+    assert torch.allclose(standardized_score, torch.zeros_like(noise))
+
+
+def test_zero_score_diffusion_removes_only_score_drift():
+    torch = pytest.importorskip("torch")
+    from stream_model.score_flow import score_flow_rollout
+
+    def prediction(x, tau, seed):
+        velocity = torch.ones_like(x)
+        noise = torch.full_like(x, 0.5)
+        return torch.stack([velocity, velocity, noise], dim=-1)
+
+    kwargs = dict(
+        x0=torch.ones(2, 3),
+        t0=0.0,
+        t1=1.0,
+        predict_fn=prediction,
+        gene_scale=torch.ones(3),
+        steps=4,
+        seed=9,
+        diffusion=0.01,
+        noise_amplitude=0.2,
+        dynamics_mode="coupled",
+    )
+    learned = score_flow_rollout(**kwargs, score_control="learned")
+    zero = score_flow_rollout(**kwargs, score_control="zero")
+    assert not torch.allclose(learned, zero)
 
 
 def test_projected_euler_rollout_is_autonomous_and_nonnegative():
