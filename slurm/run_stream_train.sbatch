@@ -50,6 +50,7 @@ DENOISING_METACELLS="${DENOISING_METACELLS:-}"
 UCE_EXPRESSION_PREPROCESSING="${UCE_EXPRESSION_PREPROCESSING:-}"
 PCA_ARTIFACT="${PCA_ARTIFACT:-}"
 MAX_INTERVAL_SKIP="${MAX_INTERVAL_SKIP:-}"
+INCLUDE_HELDOUT_BRIDGE_INTERVALS="${INCLUDE_HELDOUT_BRIDGE_INTERVALS:-0}"
 STREAM_PYTHON="${STREAM_PYTHON:-$HOME/venv/torchfix/bin/python}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -90,6 +91,7 @@ if [[ -n "$DENOISING_METACELLS" ]]; then args+=(--denoising-metacells "$DENOISIN
 if [[ -n "$UCE_EXPRESSION_PREPROCESSING" ]]; then args+=(--uce-expression-preprocessing "$UCE_EXPRESSION_PREPROCESSING"); fi
 if [[ -n "$PCA_ARTIFACT" ]]; then args+=(--pca-artifact "$PCA_ARTIFACT"); fi
 if [[ -n "$MAX_INTERVAL_SKIP" ]]; then args+=(--max-interval-skip "$MAX_INTERVAL_SKIP"); fi
+if [[ "$INCLUDE_HELDOUT_BRIDGE_INTERVALS" == "1" || "$INCLUDE_HELDOUT_BRIDGE_INTERVALS" == "true" ]]; then args+=(--include-heldout-bridge-intervals); fi
 if [[ -n "$HVG_CSV" ]]; then args+=(--hvg-csv "$HVG_CSV"); fi
 if [[ -n "$N_HVG" ]]; then args+=(--n-hvg "$N_HVG"); fi
 if [[ -n "$OUT_DIR" ]]; then args+=(--out-dir "$OUT_DIR"); fi

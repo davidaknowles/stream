@@ -65,6 +65,7 @@ class StreamConfig:
     pca_components: int = 100
     pca_fit_cells: int = 10_000
     max_interval_skip: int = 0
+    include_heldout_bridge_intervals: bool = False
     learning_rate: float = 1e-4
     epochs: int = 10
     heldout_days: list[str] = field(default_factory=lambda: ["E9.5", "E10.5"])

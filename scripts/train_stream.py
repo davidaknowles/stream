@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
-from stream_model.data import H5adIntervalSampler, intervals_with_skips
+from stream_model.data import H5adIntervalSampler, heldout_block_bridge_intervals, intervals_with_skips
 from stream_model.denoise import PCADenoiser
 from stream_model.train import (
     artifact_stem,
@@ -87,6 +87,7 @@ def main() -> None:
     )
     parser.add_argument("--pca-artifact", default=None)
     parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
+    parser.add_argument("--include-heldout-bridge-intervals", action="store_true")
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
 
@@ -137,6 +138,8 @@ def main() -> None:
         cfg.pca_artifact = cfg.resolve_path(args.pca_artifact)
     if args.max_interval_skip is not None:
         cfg.max_interval_skip = args.max_interval_skip
+    if args.include_heldout_bridge_intervals:
+        cfg.include_heldout_bridge_intervals = True
     if (cfg.ot_cost_space == "pca" or cfg.endpoint_denoising != "none") and cfg.pca_artifact is None:
         parser.error("PCA coupling or denoising requires --pca-artifact")
     if cfg.denoising_neighbors <= 0:
@@ -168,6 +171,10 @@ def main() -> None:
     train_intervals = intervals_with_skips(
         split["all_days"], set(split["heldout_days"]), max_skip=cfg.max_interval_skip
     )
+    if cfg.include_heldout_bridge_intervals:
+        train_intervals.extend(
+            heldout_block_bridge_intervals(split["all_days"], set(split["heldout_days"]))
+        )
     cells = pd.read_csv(cfg.cell_metadata_csv, index_col=0)
     full_sampler = H5adIntervalSampler.from_adata_dir(
         cfg.adata_dir,
@@ -270,6 +277,7 @@ def main() -> None:
         "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
         "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         "max_interval_skip": cfg.max_interval_skip,
+        "include_heldout_bridge_intervals": cfg.include_heldout_bridge_intervals,
         "n_train_intervals": len(train_intervals),
         "n_validation_intervals": len(adjacent_train_intervals),
         "timepoint_split": str(split_path),

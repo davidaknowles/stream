@@ -118,6 +118,27 @@ def heldout_block_forecast_intervals(
     return intervals
 
 
+def heldout_block_bridge_intervals(
+    days: list[str], heldout_days: set[str]
+) -> list[tuple[str, str]]:
+    """Connect the observed stages immediately before and after each held-out block."""
+
+    ordered = ordered_days(days)
+    bridges = []
+    block_start = None
+    for index, day in enumerate(ordered):
+        if day in heldout_days:
+            block_start = index if block_start is None else block_start
+            continue
+        if block_start is None:
+            continue
+        if block_start == 0:
+            raise ValueError("A held-out block cannot start at the first stage")
+        bridges.append((ordered[block_start - 1], day))
+        block_start = None
+    return bridges
+
+
 @dataclass(frozen=True)
 class IntervalBatch:
     x0: np.ndarray
