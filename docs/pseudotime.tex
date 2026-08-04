@@ -1,0 +1,457 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\geometry{a4paper, margin=1in}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black, urlcolor=blue!50!black}
+
+\newcommand{\stream}{STREAM}
+\newcommand{\uce}{UCE}
+\newcommand{\cre}{cCRE}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\dd}{\mathrm{d}}
+
+\title{Proposal: a learned stochastic developmental clock for STREAM}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Developmental stage is an imperfect proxy for the biological progress of an
+individual cell. A population collected at one stage can contain cells moving
+at different rates, yet precomputed pseudotime would introduce a heuristic
+coordinate outside the dynamics model. We propose instead to augment
+\stream{} with a learned stochastic clock. A UCE-conditioned scalar process
+controls how far a cell travels along a normalized, gene-valued regulatory
+velocity direction, while a separate residual diffusion accounts for
+variation not explained by progress rate. The clock is learned from unpaired
+endpoint populations by differentiable rollout and requires neither
+pseudotime labels nor absolute-time conditioning. This document distinguishes
+the clock from the current gene-wise score SDE, defines identifiable
+parameterizations and positive increments, describes fitting and validation,
+and specifies ablations that test whether variable developmental progress is
+responsible for the current persistence-level forecasts.
+\end{abstract}
+
+\section{Motivation}
+
+The causal \stream{} model defines an autonomous expression-space field
+\begin{equation}
+  \frac{\dd x}{\dd t}
+  = v_\theta\!\left(E(x),\{Z_g\}_{g=1}^{G}\right),
+  \label{eq:current-ode}
+\end{equation}
+where $x\in\R^G_{\geq 0}$ is gene expression, $E$ is the frozen \uce{}
+encoder, and $Z_g$ contains AlphaGenome-derived regulatory tokens linked to
+gene $g$. The output remains one velocity per gene. Absolute developmental
+time is not an input; \uce{} is recomputed from the current expression state
+during rollout.
+
+Equation~\ref{eq:current-ode} nevertheless assumes that the experimental time
+increment corresponds to the same amount of biological progress for every
+cell. That assumption is unlikely to hold exactly. Cells sampled at one stage
+may be delayed, rapidly differentiating, cycling, quiescent, or already
+committed to different fates. Diffusion pseudotime, Palantir, and related
+methods infer useful orderings from expression geometry
+\cite{haghverdi2016dpt,setty2019palantir}, while dynamical RNA-velocity models
+can infer gene-specific latent times from splicing kinetics
+\cite{bergen2020scvelo}. However, supplying one of these coordinates to
+\stream{} would make the model depend on a separately chosen graph, root,
+feature space, and smoothing procedure.
+
+The desired alternative is to make progress itself latent and learn it jointly
+with the expression dynamics. Experimental time then specifies the duration
+over which a cell may progress, rather than directly fixing the distance it
+must travel through expression space.
+
+\section{Why the current SDE is not already a clock}
+
+The coupled score-flow model currently supports an SDE of the form
+\begin{equation}
+  \dd X_t
+  = \left[v_\theta(X_t)+\kappa\Sigma s_\theta(X_t)\right]\dd t
+  + \sqrt{2\kappa}\,\Sigma\dd W_t,
+  \label{eq:current-sde}
+\end{equation}
+where $\Sigma$ contains fixed gene scales. This noise can cause some particles
+to move farther than others, so it may incidentally create variation in
+apparent progress. It does not, however, encode progress explicitly:
+\begin{itemize}
+  \item the Brownian increment has one component per gene and need not align
+        with the developmental velocity;
+  \item much of its variation can be perpendicular to the learned trajectory;
+  \item the score correction is designed to control population marginals, not
+        to estimate a cell-specific developmental rate; and
+  \item a wider endpoint distribution can improve Sinkhorn distance without
+        producing a coherent or interpretable ordering.
+\end{itemize}
+
+A developmental clock should instead perturb all genes coherently along the
+same local velocity direction. Residual gene-wise diffusion may still be
+useful, but it should be represented and evaluated separately.
+
+\section{Model}
+
+\subsection{Latent stochastic clock}
+
+Introduce a scalar biological-progress process $S_t$ and write
+\begin{align}
+  \dd S_t &= a_\phi(X_t)\,\dd t + \sigma_\phi(X_t)\,\dd W_t^{S},
+  \label{eq:clock-sde}\\
+  \dd X_t &= u_\theta(X_t)\,\dd S_t
+             + G_\psi(X_t)\,\dd W_t^{\perp}.
+  \label{eq:expression-sde}
+\end{align}
+The scalar clock rate and variability are state-dependent,
+\begin{equation}
+  a_\phi(x)=\operatorname{softplus}\!\left(h_a(E(x))\right),
+  \qquad
+  \sigma_\phi(x)=\operatorname{softplus}\!\left(h_\sigma(E(x))\right),
+  \label{eq:clock-heads}
+\end{equation}
+where $h_a$ and $h_\sigma$ are small heads on frozen \uce{} state. The
+direction $u_\theta$ retains the gene-specific CRE-conditioned architecture.
+The same scalar realization $\dd S_t$ multiplies every gene for one cell, so
+clock variation moves that cell coherently along its local developmental
+direction. $G_\psi\dd W_t^\perp$ represents residual stochasticity such as
+unresolved fate choice or technical variation.
+
+The clock is a latent dynamical variable, not a conditioning input. In
+particular, neither $S_t$ nor absolute developmental time is supplied to
+$u_\theta$, $a_\phi$, or $\sigma_\phi$. Every field is a function of the
+current expression-derived state.
+
+\subsection{Positive progress increments}
+
+A Gaussian Euler increment for Equation~\ref{eq:clock-sde} can occasionally be
+negative. Small backward fluctuations may be biologically acceptable, but a
+first implementation should test a monotone clock using positive lognormal
+increments:
+\begin{equation}
+  \Delta S_k
+  = a_\phi(X_k)\Delta t
+    \exp\!\left[
+      \sigma_\phi(X_k)\sqrt{\Delta t}\,\epsilon_k
+      -\frac{1}{2}\sigma_\phi(X_k)^2\Delta t
+    \right],
+  \qquad \epsilon_k\sim\N(0,1).
+  \label{eq:positive-increment}
+\end{equation}
+The correction in the exponent preserves
+$\E[\Delta S_k\mid X_k]=a_\phi(X_k)\Delta t$. The expression update is
+\begin{equation}
+  X_{k+1}=\Pi_+\!\left[
+    X_k+u_\theta(X_k)\Delta S_k
+    +G_\psi(X_k)\sqrt{\Delta t}\,\epsilon_k^\perp
+  \right],
+  \label{eq:clock-rollout}
+\end{equation}
+where $\Pi_+$ projects expression to the nonnegative orthant. This
+reparameterization is differentiable with respect to the model parameters.
+
+Gamma increments or an integrated positive stochastic rate can be considered
+later. The lognormal increment is simple, has a direct
+coefficient-of-variation interpretation, and requires one additional Gaussian
+draw per cell and step.
+
+\subsection{Direction normalization}
+
+Without a constraint, multiplying $u_\theta$ by a constant and dividing
+$a_\phi$ by the same constant leaves the expression dynamics unchanged. To
+separate direction from progress, normalize the raw regulatory velocity by a
+robust gene-space norm:
+\begin{equation}
+  u_\theta(x)
+  = \frac{v_\theta(x)}{
+      \sqrt{G^{-1}\sum_{g=1}^{G}
+      \left[v_{\theta,g}(x)/q_g\right]^2}+\epsilon},
+  \label{eq:direction-normalization}
+\end{equation}
+where $q_g$ is a fixed training-only robust gene scale. The clock increment
+then determines distance traveled in scaled expression space. A less invasive
+first experiment can freeze the pretrained $v_\theta$ and learn only the two
+clock heads; Equation~\ref{eq:direction-normalization} is preferable when the
+direction and clock are later trained jointly.
+
+\subsection{Separating clock and residual noise}
+
+Clock noise is rank one locally: its expression-space direction is
+$u_\theta(x)$. Residual diffusion should not be allowed to relearn the same
+component. Given an unconstrained residual draw $r$, project it away from the
+scaled velocity direction,
+\begin{equation}
+  r_\perp
+  = r-u\frac{\langle r,u\rangle_q}{\langle u,u\rangle_q},
+  \qquad
+  \langle y,z\rangle_q
+  = G^{-1}\sum_g\frac{y_gz_g}{q_g^2}.
+  \label{eq:orthogonal-noise}
+\end{equation}
+This decomposition makes the interpretation testable: $\sigma_\phi$ controls
+variation in progress, while $G_\psi$ controls variation transverse to the
+trajectory. The first ablation should omit $G_\psi$ entirely so that any gain
+can be attributed to the clock.
+
+\section{Learning without pseudotime labels}
+
+\subsection{Unpaired population objective}
+
+For each observed interval $(t_0,t_1)$, independently sample source cells
+$\{x_i^0\}_{i=1}^{B}$ and target cells $\{x_j^1\}_{j=1}^{C}$. Roll $M$
+particles from each source according to Equation~\ref{eq:clock-rollout}. No
+cell-level OT coupling is constructed. Compare the generated endpoint
+population $\widehat{\mathcal X}_1$ with the observed target population
+$\mathcal X_1$ using
+\begin{align}
+  \mathcal L_{\mathrm{endpoint}}
+  =&\;S_\varepsilon\!\left(
+      P(\widehat{\mathcal X}_1),P(\mathcal X_1)
+    \right)
+  +\lambda_m\mathcal L_{\mathrm{mean}}
+  +\lambda_C\mathcal L_{\mathrm{cov}},
+  \label{eq:endpoint-loss}
+\end{align}
+where $P$ is a differentiable, train-only log-normalized PCA map and
+$S_\varepsilon$ is debiased Sinkhorn divergence. Gene means are compared after
+robust scale normalization, and covariance is compared in PCA space. This is
+the same population-level supervision used by the explicit score-flow
+fine-tuning implementation.
+
+The experimental interval length enters only through the number and size of
+integration steps. The model learns how much biological progress usually
+occurs during that duration from endpoint distributions. It never receives a
+precomputed pseudotime value for an individual cell.
+
+\subsection{Anchors and regularization}
+
+The endpoint objective alone admits weakly identified solutions. The initial
+loss should therefore include
+\begin{equation}
+  \mathcal L
+  =\mathcal L_{\mathrm{endpoint}}
+   +\lambda_a\E[(\log a_\phi)^2]
+   +\lambda_\sigma\E[\sigma_\phi^2]
+   +\lambda_\theta\lVert\theta-\theta_0\rVert_2^2.
+  \label{eq:regularized-loss}
+\end{equation}
+The rate prior centers $a_\phi$ near one in the chosen progress units, the
+noise penalty prevents variance inflation from substituting for dynamics, and
+$\theta_0$ is the simulation-free pretrained velocity checkpoint. These are
+soft anchors rather than pseudotime labels.
+
+Validation must use cells disjoint from training within every observed stage,
+fixed source and target populations, fixed clock-noise draws, and an
+interval-balanced average. The pretrained fixed-clock model is validation
+step zero. Checkpoint selection should require a material improvement over
+that baseline rather than merely a decreasing training objective.
+
+\subsection{Truncated gradients through UCE}
+
+At each rollout step, \uce{} is recomputed from current raw expression using
+the low-variance systematic tokenization scheme. Tokenization is discrete and
+the encoder is frozen, so its state should be treated as stop-gradient.
+Gradients still reach every clock and velocity evaluation directly and pass
+through the additive expression updates. KNN or metacell smoothing may be used
+to construct simulation-free pretraining targets, but it should not be applied
+during causal clock rollout because a same-stage reference population is not
+available for a future cell.
+
+\section{Interpretation and limitations}
+
+\subsection{What the clock can explain}
+
+The model is appropriate when cells share a local developmental path but vary
+in how quickly they move along it. It yields interpretable quantities:
+\begin{itemize}
+  \item $a_\phi(x)$: expected progress rate for a cell state;
+  \item $\sigma_\phi(x)$: uncertainty or heterogeneity in that rate;
+  \item $S_{t_1}-S_{t_0}$: realized latent progress over an interval; and
+  \item $u_\theta(x)$: gene-expression direction per unit progress.
+\end{itemize}
+Stage-wise distributions of inferred progress should be ordered on average,
+but overlap is expected and is one motivation for the model.
+
+\subsection{Branching}
+
+A scalar clock does not resolve branching when the same expression state can
+enter qualitatively different futures. Clock noise changes distance along a
+direction, not the direction itself. If the clock improves short-range
+forecasting but fails near fate decisions, the next extension should use a
+small mixture of regulatory velocity directions with a state-dependent gate,
+or retain an explicitly low-rank transverse diffusion. Branch-specific
+complexity should not be added until the rank-one clock ablation establishes
+that variable progress is useful.
+
+\subsection{Proliferation and changing population mass}
+
+Neither the clock nor a mass-preserving Sinkhorn loss explains changes in cell
+type abundance caused by division, death, or sampling. A progression-rate
+head may correlate with proliferation, but it does not create or remove
+particles. Growth weights, a learned birth--death rate, or unbalanced endpoint
+loss remain complementary. This distinction is important: faster progress,
+trajectory branching, and population growth are separate mechanisms and
+should not be absorbed into one noise parameter.
+
+\section{Ablation plan}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}p{0.06\textwidth}p{0.25\textwidth}p{0.24\textwidth}p{0.27\textwidth}@{}}
+\toprule
+Arm & Dynamics & Learned additions & Question \\
+\midrule
+A & $\dd X=v_\theta\dd t$ & None & Fixed-clock persistence-relative baseline \\
+B & $\dd X=a_\phi u_\theta\dd t$ & Deterministic rate & Does state-dependent speed help? \\
+C & $\dd X=u_\theta\dd S$ & Rate and scalar clock noise & Does variable progress improve endpoint prediction? \\
+D & Current score SDE & Gene-wise score/noise & Is generic diffusion sufficient? \\
+E & Clock plus $G_\psi\dd W^\perp$ & Clock and residual noise & Is transverse stochasticity additionally required? \\
+\bottomrule
+\end{tabular}
+\caption{Staged ablations separating variable developmental progress from generic expression diffusion.}
+\label{tab:ablations}
+\end{table}
+
+Arms A--C should be implemented first, using identical independent endpoint
+batches and Brownian seeds. Begin by freezing the pretrained regulatory
+velocity, then repeat B and C with normalized direction fine-tuning if either
+shows held-out benefit. Arm E is justified only if C improves progress-related
+metrics but leaves systematic multimodal endpoint errors.
+
+\section{Evaluation}
+
+The primary endpoint metric remains persistence-normalized Sinkhorn skill,
+\begin{equation}
+  \operatorname{skill}
+  =1-\frac{S_\varepsilon(P(\widehat{\mathcal X}_1),P(\mathcal X_1))}
+           {S_\varepsilon(P(\mathcal X_0),P(\mathcal X_1))}.
+  \label{eq:skill}
+\end{equation}
+Positive skill means the predicted population is closer to the observed
+endpoint than a no-change forecast. This must be accompanied by gene-level
+mean-shift $R^2$, mean-shift MAE, per-gene Wasserstein distance, and major-cell-
+type-stratified metrics. Sinkhorn improvement alone can reward variance
+broadening.
+
+Clock-specific diagnostics should include:
+\begin{itemize}
+  \item distributions of $a_\phi$, $\sigma_\phi$, and realized $\Delta S$ by
+        experimental stage and major cell type;
+  \item the fraction of endpoint variance explained by clock-aligned versus
+        transverse displacement;
+  \item stability of rates under Brownian seed, particle count, and rollout
+        step count;
+  \item calibration of predicted progress variance against observed spread
+        along the local velocity direction; and
+  \item correlations with cell-cycle scores as diagnostics, not training
+        labels, to detect a clock that merely recovers proliferation state.
+\end{itemize}
+
+Success requires a held-out-stage gain over the fixed-clock model, not only an
+observed-interval validation gain. The learned clock should improve both
+distributional and gene-shift metrics, remain stable across integration
+settings, and produce bounded state-dependent rates rather than extreme
+variance in a small number of cells.
+
+\section{Implementation plan}
+
+The implementation should preserve the existing separation between reusable
+model code and atlas-specific scripts:
+\begin{enumerate}
+  \item Add reusable scalar rate and clock-noise heads operating on frozen
+        \uce{} state. Initialize the deterministic rate near one and clock
+        noise near zero.
+  \item Add the positive stochastic increment in
+        Equation~\ref{eq:positive-increment} to the differentiable population
+        rollout module. Accept fixed scalar Gaussian draws for reproducible
+        validation.
+  \item Implement robust direction normalization and verify invariance to a
+        global rescaling of raw velocity.
+  \item Fit Arm B and Arm C from the same pretrained score-flow or autonomous
+        checkpoint, initially freezing all existing model parameters.
+  \item Extend checkpoints with clock configuration, initialization,
+        normalization scales, parent checkpoint, and selected validation step.
+  \item Extend held-out causal evaluation with fixed-clock, deterministic-rate,
+        and stochastic-clock controls using identical source cells.
+  \item Add synthetic tests for known variable-speed trajectories, including a
+        case where diagonal diffusion broadens the population but cannot match
+        coherent progress variation.
+  \item Run matched raw, KNN-pretrained, and metacell-pretrained models without
+        applying smoothing during rollout.
+\end{enumerate}
+
+The first experiment should be small: two particles per source, two to four
+rollout steps, a deterministic-rate arm, and a stochastic-clock arm. The
+existing explicit population fine-tuning workflow already supplies independent
+endpoint batches, differentiable PCA/Sinkhorn loss, frozen validation draws,
+and pretrained checkpoint anchoring. The main new machinery is therefore two
+scalar heads and one shared random increment per cell and step.
+
+\section{Decision rule}
+
+The stochastic clock is supported if Arm C improves held-out endpoint skill
+and gene-shift metrics over both Arm A and Arm B, and if learned progress
+variance is nonzero but bounded. If Arm B improves while Arm C does not, cells
+benefit from state-dependent deterministic rates but stochastic pseudotime is
+unnecessary. If the current gene-wise SDE improves while the clock does not,
+the useful uncertainty is not primarily variation in developmental progress.
+If no arm exceeds persistence, the limiting issue is more likely trajectory
+direction, lineage ambiguity, growth, or insufficient information in snapshot
+expression than the absence of a pseudotime coordinate.
+
+\begin{thebibliography}{99}
+
+\bibitem{haghverdi2016dpt}
+Haghverdi, L., B\"uttner, M., Wolf, F. A., Buettner, F. \& Theis, F. J.
+Diffusion pseudotime robustly reconstructs lineage branching.
+\textit{Nature Methods} \textbf{13}, 845--848 (2016).
+
+\bibitem{setty2019palantir}
+Setty, M. et al.
+Characterization of cell fate probabilities in single-cell data with Palantir.
+\textit{Nature Biotechnology} \textbf{37}, 451--460 (2019).
+
+\bibitem{bergen2020scvelo}
+Bergen, V., Lange, M., Peidli, S., Wolf, F. A. \& Theis, F. J.
+Generalizing RNA velocity to transient cell states through dynamical modeling.
+\textit{Nature Biotechnology} \textbf{38}, 1408--1414 (2020).
+
+\bibitem{schiebinger2019wot}
+Schiebinger, G. et al.
+Optimal-transport analysis of single-cell gene expression identifies
+developmental trajectories in reprogramming.
+\textit{Cell} \textbf{176}, 928--943 (2019).
+
+\bibitem{song2021sde}
+Song, Y. et al.
+Score-Based Generative Modeling through Stochastic Differential Equations.
+\textit{International Conference on Learning Representations} (2021).
+\url{https://arxiv.org/abs/2011.13456}
+
+\bibitem{li2020neuralsde}
+Li, X., Wong, T.-K. L., Chen, R. T. Q. \& Duvenaud, D.
+Scalable Gradients for Stochastic Differential Equations.
+\textit{International Conference on Artificial Intelligence and Statistics}
+(2020).
+\url{https://arxiv.org/abs/2001.01328}
+
+\bibitem{albergo2023stochastic}
+Albergo, M. S., Boffi, N. M. \& Vanden-Eijnden, E.
+Stochastic Interpolants: A Unifying Framework for Flows and Diffusions.
+\url{https://arxiv.org/abs/2303.08797}
+
+\end{thebibliography}
+
+\end{document}

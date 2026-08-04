@@ -2,6 +2,7 @@
 
 ## 2026-08-04
 
+- Added `docs/pseudotime.tex`, a standalone proposal for learning pseudotime inside STREAM as a stochastic developmental clock. A positive UCE-conditioned scalar increment controls coherent movement along a normalized CRE-conditioned gene-velocity direction, while optional orthogonal diffusion represents non-clock variation. The proposal covers identifiability, unpaired population fitting, proliferation and branching limitations, matched deterministic/stochastic ablations, clock-specific diagnostics, and implementation steps. The seven-page PDF compiles without TeX warnings or unresolved references.
 - Added population-level fine-tuning of coupled score-flow checkpoints through explicit expression-space Euler--Maruyama rollouts. Source and target cells are sampled independently within each observed interval, eliminating OT cell-pair couplings from this stage.
 - Each update averages a coupled ODE endpoint loss and a positive-diffusion SDE endpoint loss. The loss combines debiased Sinkhorn divergence in whitened train-only PCA coordinates, robustly scaled gene-mean error, PCA covariance error, and a pretrained-parameter anchor.
 - Fine-tuning freezes STREAM's regulatory trunk and autonomous velocity control, and updates only the path-coordinate modulation, conditional velocity, and shared noise heads. Raw current expression is re-encoded by frozen UCE at each step; the discrete encoder is stop-gradient and no KNN/metacell smoothing is applied during rollout.
