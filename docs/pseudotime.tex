@@ -85,7 +85,10 @@ The coupled score-flow model currently supports an SDE of the form
   + \sqrt{2\kappa}\,\Sigma\dd W_t,
   \label{eq:current-sde}
 \end{equation}
-where $\Sigma$ contains fixed gene scales. This noise can cause some particles
+where $\Sigma=\operatorname{diag}(q)$ contains fixed gene scales and
+$W_t\in\R^G$ has one Brownian coordinate per gene. The corresponding regular
+stochastic-interpolant target uses
+$\epsilon\sim\N(0,I_G)$, also a $G$-vector. This noise can cause some particles
 to move farther than others, so it may incidentally create variation in
 apparent progress. It does not, however, encode progress explicitly:
 \begin{itemize}
@@ -103,6 +106,53 @@ same local velocity direction. Residual gene-wise diffusion may still be
 useful, but it should be represented and evaluated separately.
 
 \section{Model}
+
+\subsection{Notation and dimensions}
+
+Let $G$ be the number of modeled genes, $D$ the \uce{} state dimension, $K$
+the maximum number of regulatory tokens per gene, $C$ the CRE-token embedding
+dimension, and $r$ the optional residual diffusion rank. The main variables
+have the following dimensions:
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}p{0.22\textwidth}p{0.24\textwidth}p{0.46\textwidth}@{}}
+\toprule
+Variable & Dimension & Meaning \\
+\midrule
+$x,X_t,q,u,d,\widehat d$ & $\R^G$ & Expression state, gene scales, or gene-valued direction/displacement \\
+$E(x)$ & $\R^D$ & Frozen \uce{} cell-state representation; currently $D=1280$ \\
+$Z$ & $\R^{G\times K\times C}$ & Padded gene-by-regulatory-token representations \\
+$S_t,a_\phi,\sigma_\phi$ & Scalars & Progress, expected clock rate, and clock variability \\
+$W_t^S,z,\widehat z$ & Scalars & Clock Brownian motion, sampled clock noise, and predicted clock noise \\
+$W_t^\perp$ & $\R^r$ & Optional residual Brownian motion \\
+$G_\psi(x)$ & $\R^{G\times r}$ & Residual expression-diffusion loading matrix \\
+$\epsilon,W_t$ & $\R^G$ & Gene-wise noise in the regular score-flow model \\
+$\tau,\gamma(\tau),\rho$ & Scalars & Interpolation coordinate, bridge schedule, and fixed bridge amplitude \\
+\bottomrule
+\end{tabular}
+\caption{Shapes of the variables used in the stochastic-clock model.}
+\label{tab:dimensions}
+\end{table}
+
+The previously undefined $q=(q_1,\ldots,q_G)\in\R^G_{>0}$ is a fixed vector
+of training-only per-gene expression scales, estimated from endpoint counts
+with a nonzero floor. It defines the dimensionless scaled inner product and
+norm
+\begin{equation}
+  \langle y,z\rangle_q
+  =G^{-1}\sum_{g=1}^{G}\frac{y_gz_g}{q_g^2},
+  \qquad
+  \lVert y\rVert_q=\sqrt{\langle y,y\rangle_q}.
+  \label{eq:q-norm}
+\end{equation}
+Thus $q_g$, $x_g$, and $u_g$ have expression units. The latent progress $S$
+is dimensionless, $a_\phi$ has units of inverse experimental time, and
+$\sigma_\phi$ has units of inverse square-root time. Consequently
+$u_\theta\,\dd S$ has expression units. The bridge coordinate $\tau$, bridge
+amplitude $\rho$, and clock draw $z$ are dimensionless. Crucially,
+$z\in\R$ is one scalar shared across all genes for one cell and path, unlike
+the regular score-flow noise $\epsilon\in\R^G$.
 
 \subsection{Latent stochastic clock}
 
@@ -253,7 +303,8 @@ $a_\phi$ as latent progress rate.
 Given coupled endpoints, define the scaled chord length and direction
 \begin{equation}
   d=x_1-x_0,\qquad
-  \ell=\sqrt{G^{-1}\sum_g(d_g/q_g)^2},\qquad
+  \ell=\lVert d\rVert_q
+      =\sqrt{G^{-1}\sum_g(d_g/q_g)^2},\qquad
   \widehat d=d/(\ell+\epsilon).
   \label{eq:clock-chord}
 \end{equation}
@@ -261,31 +312,42 @@ A clock-aligned stochastic interpolant perturbs the linear path using one
 scalar Gaussian variable shared by every gene:
 \begin{align}
   X_\tau
-  &=(1-\tau)x_0+\tau x_1+\gamma(\tau)\widehat d\,z,
+  &=(1-\tau)x_0+\tau x_1+\rho\gamma(\tau)\widehat d\,z,
   &z&\sim\N(0,1),
   \label{eq:clock-interpolant}\\
   \partial_\tau X_\tau
-  &=d+\gamma'(\tau)\widehat d\,z.
+  &=d+\rho\gamma'(\tau)\widehat d\,z.
   \label{eq:clock-flow-target}
 \end{align}
 Unlike the current gene-wise Gaussian interpolant, the random term changes
 distance along the endpoint chord rather than independently perturbing every
-gene. The model predicts a normalized direction $u_\theta(X_\tau)$, positive
-rate $a_\phi(X_\tau)$, clock scale $\sigma_\phi(X_\tau)$, and scalar noise
-$\widehat z_\psi(X_\tau,\tau)$. A coupled clock-flow readout has the form
+gene. Here $\rho>0$ is a fixed dimensionless bridge-noise amplitude, analogous
+to the fixed noise amplitude in the current stochastic interpolant. The model
+predicts a normalized direction $u_\theta(X_\tau)$, positive rate
+$a_\phi(X_\tau)$, and scalar noise
+$\widehat z_\psi(X_\tau,\tau)\in\R$. The rollout clock scale
+$\sigma_\phi(X_\tau)$ is subsequently calibrated and fine-tuned by the
+endpoint objective. A coupled clock-flow readout has the form
 \begin{equation}
   f_{\mathrm{clock}}
   =a_\phi u_\theta
    +\frac{\gamma'(\tau)}{t_1-t_0}
-    \sigma_\phi u_\theta\widehat z_\psi,
+    \rho u_\theta\widehat z_\psi,
   \label{eq:coupled-clock-flow}
 \end{equation}
 while the score component tangent to the trajectory is constructed from the
-same scalar estimate,
+same scalar estimate. Define the dual scaled direction
+\begin{equation}
+  (u_q^*)_g=\frac{u_g}{Gq_g^2},
+  \qquad
+  u_q^{*T}u=\lVert u\rVert_q^2=1.
+  \label{eq:dual-direction}
+\end{equation}
+The tangent ambient-score vector is then
 \begin{equation}
   s_\parallel
   =-\frac{\widehat z_\psi}
-          {\gamma(\tau)\sigma_\phi+\epsilon}\,u_\theta.
+          {\rho\gamma(\tau)+\epsilon}\,u_q^*.
   \label{eq:tangent-clock-score}
 \end{equation}
 Thus the flow and score cannot disagree about the latent clock fluctuation.
