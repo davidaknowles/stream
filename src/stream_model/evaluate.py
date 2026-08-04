@@ -36,6 +36,7 @@ def evaluate_intervals(
     n_batches: int = 20,
     eval_gene_sets: dict[str, list[int] | np.ndarray | None] | None = None,
     batch_cache: str | Path | None = None,
+    coordinates=None,
 ) -> pd.DataFrame:
     parameter = next(model.parameters(), None)
     device = parameter.device if parameter is not None else next(model.buffers()).device
@@ -55,7 +56,7 @@ def evaluate_intervals(
             xt, target, _tau = ot_cfm_batch(
                 x0, x1, batch.t0, batch.t1, generator=generator, **coupling_kwargs(config)
             )
-            state_t = xt
+            state_t = coordinates.to_model(xt) if coordinates is not None else xt
         else:
             state0 = torch.as_tensor(batch.state0, device=device)
             state1 = torch.as_tensor(batch.state1, device=device)
@@ -74,6 +75,8 @@ def evaluate_intervals(
             if cre_inputs is None
             else predict_stream_chunked(model, state_t, cre_inputs, config.gene_chunk_size)
         )
+        if coordinates is not None:
+            pred = coordinates.to_expression(pred)
         for name, indices in eval_indices.items():
             pred_eval = pred if indices is None else pred.index_select(1, indices)
             target_eval = target if indices is None else target.index_select(1, indices)
@@ -97,6 +100,7 @@ def evaluate_intervals(
                     "eval_gene_set": name,
                     "n_eval_genes": int(pred_eval.shape[1]),
                     "cell_state": getattr(config, "cell_state", "expression"),
+                    "dynamics_coordinates": "gene_scaled" if coordinates is not None else "count",
                     "loss": float(mse_cfm_loss(pred_eval, target_eval).cpu()),
                     "velocity_mae": float(np.mean(np.abs(err))),
                     "displacement_mse": float(torch.mean(displacement_err.square()).cpu()),

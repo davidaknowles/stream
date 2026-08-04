@@ -62,6 +62,8 @@ class StreamConfig:
     denoising_neighbors: int = 15
     denoising_metacells: int = 512
     uce_expression_preprocessing: str = "raw"
+    dynamics_coordinates: str = "count"
+    gene_scale_cells_per_day: int = 512
     pca_artifact: Path | None = None
     pca_components: int = 100
     pca_fit_cells: int = 10_000

@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
+from stream_model.coordinates import GeneScaleCoordinates, estimate_sampler_gene_scale
 from stream_model.data import H5adIntervalSampler, heldout_block_bridge_intervals, intervals_with_skips
 from stream_model.denoise import PCADenoiser
 from stream_model.train import (
@@ -85,6 +86,8 @@ def main() -> None:
     parser.add_argument(
         "--uce-expression-preprocessing", choices=["raw", "pca", "denoised"], default=None
     )
+    parser.add_argument("--dynamics-coordinates", choices=["count", "gene_scaled"], default=None)
+    parser.add_argument("--gene-scale-cells-per-day", type=int, default=None)
     parser.add_argument("--pca-artifact", default=None)
     parser.add_argument("--max-interval-skip", type=int, choices=[0, 1, 2], default=None)
     parser.add_argument("--include-heldout-bridge-intervals", action="store_true")
@@ -134,6 +137,12 @@ def main() -> None:
         cfg.denoising_metacells = args.denoising_metacells
     if args.uce_expression_preprocessing is not None:
         cfg.uce_expression_preprocessing = args.uce_expression_preprocessing
+    if args.dynamics_coordinates is not None:
+        cfg.dynamics_coordinates = args.dynamics_coordinates
+    if args.gene_scale_cells_per_day is not None:
+        cfg.gene_scale_cells_per_day = args.gene_scale_cells_per_day
+    if cfg.gene_scale_cells_per_day <= 0:
+        parser.error("--gene-scale-cells-per-day must be positive")
     if args.pca_artifact is not None:
         cfg.pca_artifact = cfg.resolve_path(args.pca_artifact)
     if args.max_interval_skip is not None:
@@ -215,8 +224,21 @@ def main() -> None:
         else None
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+    coordinates = None
+    if cfg.dynamics_coordinates == "gene_scaled":
+        coordinates = GeneScaleCoordinates(
+            estimate_sampler_gene_scale(
+                sampler, cells_per_day=cfg.gene_scale_cells_per_day
+            ).to(device),
+            mode="gene_scaled",
+        )
     if args.init_checkpoint is not None:
         checkpoint = torch.load(cfg.resolve_path(args.init_checkpoint), map_location=device)
+        checkpoint_coordinates = checkpoint.get(
+            "dynamics_coordinates", checkpoint.get("config", {}).get("dynamics_coordinates", "count")
+        )
+        if checkpoint_coordinates != cfg.dynamics_coordinates:
+            raise ValueError("Initialization checkpoint uses different dynamics coordinates")
         model.load_state_dict(checkpoint["model"], strict=True)
         if "optimizer" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer"])
@@ -229,6 +251,7 @@ def main() -> None:
             state_encoder=state_encoder,
             seed=cfg.seed + 23,
             pca=pca,
+            coordinates=coordinates,
         )
         if validation_sampler is not None
         else None
@@ -275,6 +298,7 @@ def main() -> None:
         "denoising_neighbors": cfg.denoising_neighbors,
         "denoising_metacells": cfg.denoising_metacells,
         "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
+        "dynamics_coordinates": cfg.dynamics_coordinates,
         "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         "max_interval_skip": cfg.max_interval_skip,
         "include_heldout_bridge_intervals": cfg.include_heldout_bridge_intervals,
@@ -288,13 +312,24 @@ def main() -> None:
             "model": current_model.state_dict(),
             "optimizer": current_optimizer.state_dict(),
             "config": cfg.to_dict(),
-            "model_contract": "online_uce_autonomous_v1" if state_encoder is not None else "legacy_v1",
+            "model_contract": (
+                "online_uce_gene_scaled_autonomous_v2"
+                if state_encoder is not None and coordinates is not None
+                else "gene_scaled_v2"
+                if coordinates is not None
+                else "online_uce_autonomous_v1"
+                if state_encoder is not None
+                else "legacy_v1"
+            ),
+            "dynamics_coordinates": cfg.dynamics_coordinates,
             "gene_ids": gene_ids,
             "cre_token_arrays": str(cre_token_path),
             "selection": validation_row,
             "validation_config": validation_config,
             "pca_artifact": None if cfg.pca_artifact is None else str(cfg.pca_artifact),
         }
+        if coordinates is not None:
+            payload["gene_scale"] = coordinates.gene_scale.detach().cpu()
         temporary_path = ckpt_path.with_suffix(ckpt_path.suffix + ".tmp")
         torch.save(payload, temporary_path)
         temporary_path.replace(ckpt_path)
@@ -320,6 +355,7 @@ def main() -> None:
         validation_rollout_steps=args.validation_rollout_steps,
         checkpoint_callback=save_best_checkpoint,
         pca=pca,
+        coordinates=coordinates,
     )
 
     pd.DataFrame(result.train_metrics).to_csv(metrics_path, index=False)

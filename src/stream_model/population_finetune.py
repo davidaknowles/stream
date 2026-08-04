@@ -88,9 +88,9 @@ def differentiable_score_flow_rollout(
     particles: int = 1,
     brownian_noise: Sequence[torch.Tensor] | None = None,
 ) -> torch.Tensor:
-    """Euler-Maruyama rollout retaining gradients through expression updates.
+    """Euler-Maruyama rollout retaining gradients through dynamical-coordinate updates.
 
-    ``predict_fn`` may intentionally detach expression while computing UCE. The
+    ``predict_fn`` may intentionally detach its UCE boundary input. The
     additive state update still carries endpoint gradients across rollout steps.
     """
 

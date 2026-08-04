@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from .coordinates import GeneScaleCoordinates, robust_gene_scale as _robust_gene_scale
 from .pair_bank import IntervalPairBank
 from .train import uce_input_expression
 
@@ -15,11 +16,7 @@ from .train import uce_input_expression
 def robust_gene_scale(x0: torch.Tensor, x1: torch.Tensor) -> torch.Tensor:
     """Estimate fixed per-gene count scales with a robust nonzero floor."""
 
-    values = torch.cat([x0.float(), x1.float()])
-    scale = values.std(dim=0, unbiased=False)
-    positive = scale[scale > 0]
-    floor = positive.median() * 0.05 if len(positive) else scale.new_tensor(1.0)
-    return scale.clamp_min(max(float(floor), 1e-3))
+    return _robust_gene_scale(torch.cat([x0.float(), x1.float()]))
 
 
 def stochastic_interpolant(
@@ -130,18 +127,32 @@ def predict_score_flow_chunked(model, state, tau, cre_inputs, gene_chunk_size):
     return torch.cat(chunks, dim=1)
 
 
-def calibrate_scales(pair_bank: IntervalPairBank, n_batches: int = 64) -> tuple[torch.Tensor, torch.Tensor]:
-    """Estimate perturbation and velocity scales from training-only paired endpoints."""
+def calibrate_scales(
+    pair_bank: IntervalPairBank,
+    n_batches: int = 64,
+    coordinate_mode: str = "count",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Estimate the expression transform and model-coordinate velocity scales."""
 
-    endpoints = []
-    velocities = []
+    raw_endpoints = []
+    endpoint0 = []
+    endpoint1 = []
+    durations = []
     for _ in range(n_batches):
         batch = pair_bank.next()
-        endpoints.extend([batch.target_x0.detach().cpu(), batch.target_x1.detach().cpu()])
-        velocities.append(((batch.target_x1 - batch.target_x0) / (batch.t1 - batch.t0)).detach().cpu())
-    x = torch.cat(endpoints)
+        raw_endpoints.extend([batch.raw_x0.detach().cpu(), batch.raw_x1.detach().cpu()])
+        endpoint0.append(batch.target_x0.detach().cpu())
+        endpoint1.append(batch.target_x1.detach().cpu())
+        durations.append(float(batch.t1 - batch.t0))
+    x0 = torch.cat(endpoint0)
+    x1 = torch.cat(endpoint1)
+    gene_scale = _robust_gene_scale(torch.cat(raw_endpoints))
+    coordinates = GeneScaleCoordinates(gene_scale, mode=coordinate_mode)
+    velocities = [
+        coordinates.to_model((first - second) / duration)
+        for first, second, duration in zip(endpoint1, endpoint0, durations, strict=True)
+    ]
     velocity = torch.cat(velocities)
-    gene_scale = robust_gene_scale(x[: len(x) // 2], x[len(x) // 2 :])
     flow_scale = velocity.square().mean(dim=0).sqrt()
     positive = flow_scale[flow_scale > 0]
     # Match a 1e-3 second-moment floor: scale is the square root of that moment.
@@ -163,20 +174,30 @@ def evaluate_score_flow_bank(config, bank, model, cre_inputs, state_encoder, pca
 
     model.eval()
     rows = []
+    coordinates = GeneScaleCoordinates(
+        gene_scale, mode=getattr(config, "dynamics_coordinates", "count")
+    )
+    perturbation_scale = coordinates.perturbation_scale(gene_scale)
     generator = torch.Generator(device=gene_scale.device).manual_seed(int(config.seed) + 55_901)
     for _ in bank.intervals:
         batch = bank.next()
+        x0 = coordinates.to_model(batch.target_x0)
+        x1 = coordinates.to_model(batch.target_x1)
         xt, velocity_target, noise_target, tau = stochastic_interpolant(
-            batch.target_x0,
-            batch.target_x1,
-            gene_scale,
+            x0,
+            x1,
+            perturbation_scale,
             batch.t0,
             batch.t1,
             noise_amplitude=config.score_flow_noise_scale,
             tau_min=config.score_flow_tau_min,
             generator=generator,
         )
-        state = state_encoder.encode(uce_input_expression(config, xt, pca, xt), seed=int(config.seed) + 55_901)
+        expression_xt = coordinates.to_expression(xt)
+        state = state_encoder.encode(
+            uce_input_expression(config, expression_xt, pca, expression_xt),
+            seed=int(config.seed) + 55_901,
+        )
         prediction = predict_score_flow_chunked(model, state, tau, cre_inputs, config.gene_chunk_size)
         _loss, row = score_flow_loss(
             prediction,
@@ -184,7 +205,7 @@ def evaluate_score_flow_bank(config, bank, model, cre_inputs, state_encoder, pca
             noise_target,
             flow_scale,
             tau,
-            gene_scale,
+            perturbation_scale,
             batch.t1 - batch.t0,
             config.score_flow_noise_scale,
             config.score_flow_score_weight,
@@ -223,9 +244,12 @@ def train_score_flow_steps(
     validation_bank = (
         None if validation_sampler is None else IntervalPairBank(config, validation_sampler, device, pca=pca)
     )
-    gene_scale, flow_scale = calibrate_scales(bank)
+    coordinate_mode = getattr(config, "dynamics_coordinates", "count")
+    gene_scale, flow_scale = calibrate_scales(bank, coordinate_mode=coordinate_mode)
     gene_scale = gene_scale.to(device)
     flow_scale = flow_scale.to(device)
+    coordinates = GeneScaleCoordinates(gene_scale, mode=coordinate_mode)
+    perturbation_scale = coordinates.perturbation_scale(gene_scale)
     metrics = []
     best_ema = None
     ema = None
@@ -236,17 +260,20 @@ def train_score_flow_steps(
         epoch_rows = []
         for step in range(steps_per_epoch):
             batch = bank.next()
+            x0 = coordinates.to_model(batch.target_x0)
+            x1 = coordinates.to_model(batch.target_x1)
             xt, velocity_target, noise_target, tau = stochastic_interpolant(
-                batch.target_x0,
-                batch.target_x1,
-                gene_scale,
+                x0,
+                x1,
+                perturbation_scale,
                 batch.t0,
                 batch.t1,
                 noise_amplitude=config.score_flow_noise_scale,
                 tau_min=config.score_flow_tau_min,
             )
+            expression_xt = coordinates.to_expression(xt)
             state = state_encoder.encode(
-                uce_input_expression(config, xt, pca, xt),
+                uce_input_expression(config, expression_xt, pca, expression_xt),
                 seed=int(config.seed) + epoch * steps_per_epoch + step,
             )
             optimizer.zero_grad(set_to_none=True)
@@ -265,7 +292,7 @@ def train_score_flow_steps(
                     noise_target.index_select(1, indices),
                     flow_scale.index_select(0, indices),
                     tau,
-                    gene_scale.index_select(0, indices),
+                    perturbation_scale.index_select(0, indices),
                     batch.t1 - batch.t0,
                     config.score_flow_noise_scale,
                     config.score_flow_score_weight,

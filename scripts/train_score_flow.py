@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--steps-per-epoch", type=int, default=100)
     parser.add_argument("--noise-scale", type=float, default=0.2)
+    parser.add_argument("--dynamics-coordinates", choices=["count", "gene_scaled"], default=None)
     parser.add_argument("--limit-intervals", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
@@ -64,6 +65,8 @@ def main() -> None:
     cfg.gene_chunk_size = args.gene_chunk_size
     cfg.epochs = args.epochs
     cfg.score_flow_noise_scale = args.noise_scale
+    if args.dynamics_coordinates is not None:
+        cfg.dynamics_coordinates = args.dynamics_coordinates
     cfg.uce_sampling = "systematic"
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -120,7 +123,12 @@ def main() -> None:
             "model": current_model.state_dict(),
             "optimizer": current_optimizer.state_dict(),
             "config": cfg.to_dict(),
-            "model_contract": "online_uce_coupled_score_flow_v2",
+            "model_contract": (
+                "online_uce_gene_scaled_score_flow_v3"
+                if cfg.dynamics_coordinates == "gene_scaled"
+                else "online_uce_coupled_score_flow_v2"
+            ),
+            "dynamics_coordinates": cfg.dynamics_coordinates,
             "gene_ids": gene_ids,
             "cre_token_arrays": str(cre_path),
             "timepoint_split": str(split_path),

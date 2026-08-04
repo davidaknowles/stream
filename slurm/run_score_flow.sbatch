@@ -28,6 +28,7 @@ if [[ "$MODE" == "train" ]]; then
     --ot-pairs-per-pool "${OT_PAIRS_PER_POOL:-1024}" --batch-size "${BATCH_SIZE:-8}" \
     --gene-chunk-size "${GENE_CHUNK_SIZE:-256}" --epochs "${EPOCHS:-50}" \
     --steps-per-epoch "${STEPS_PER_EPOCH:-100}" --noise-scale "${NOISE_SCALE:-0.2}" \
+    --dynamics-coordinates "${DYNAMICS_COORDINATES:-count}" \
     --limit-intervals "${LIMIT_INTERVALS:-0}" --device cuda
 elif [[ "$MODE" == "population_finetune" ]]; then
   "$STREAM_PYTHON" scripts/finetune_population_rollout.py \

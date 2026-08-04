@@ -13,6 +13,7 @@ import torch
 from sklearn.decomposition import PCA
 
 from stream_model.config import StreamConfig, apply_config_overrides
+from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler, heldout_block_forecast_intervals
 from stream_model.denoise import PCADenoiser
 from stream_model.rollout import mean_shift_metrics, projected_euler_rollout, sinkhorn_divergence
@@ -113,8 +114,9 @@ def main() -> None:
     model = build_model(cfg, len(gene_ids), int(cre_inputs["cre_embeddings"].shape[-1])).to(device)
     checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{artifact_stem(cfg)}.pt"
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    if checkpoint.get("model_contract") != "online_uce_autonomous_v1":
-        raise ValueError("Causal rollout requires an online_uce_autonomous_v1 checkpoint")
+    supported_contracts = {"online_uce_autonomous_v1", "online_uce_gene_scaled_autonomous_v2"}
+    if checkpoint.get("model_contract") not in supported_contracts:
+        raise ValueError(f"Causal rollout requires one of {sorted(supported_contracts)}")
     if checkpoint.get("gene_ids") != gene_ids:
         raise ValueError("Checkpoint gene panel does not match selected_genes.csv")
     if Path(checkpoint.get("cre_token_arrays", cre_token_path)).resolve() != cre_token_path.resolve():
@@ -126,6 +128,11 @@ def main() -> None:
     cfg.uce_expression_preprocessing = checkpoint_config.get("uce_expression_preprocessing", "raw")
     # Checkpoints predating systematic resampling retain their original multinomial UCE contract.
     cfg.uce_sampling = checkpoint_config.get("uce_sampling", "multinomial")
+    coordinates = (
+        coordinates_from_checkpoint(checkpoint, device)
+        if checkpoint.get("model_contract") == "online_uce_gene_scaled_autonomous_v2"
+        else None
+    )
     uce_pca = None
     if cfg.uce_expression_preprocessing == "pca":
         pca_artifact = checkpoint.get("pca_artifact")
@@ -152,19 +159,32 @@ def main() -> None:
     for interval_index, (day0, day1) in enumerate(intervals):
         batch = sampler.sample_interval(day0, day1)
         x0 = torch.as_tensor(batch.x0, device=device)
+        model_x0 = coordinates.to_model(x0) if coordinates is not None else x0
         observed_x1 = np.asarray(batch.x1, dtype=np.float32)
         source = np.asarray(batch.x0, dtype=np.float32)
         observed_pca = pca.transform(np.log1p(observed_x1))
         source_pca = pca.transform(np.log1p(source))
         persistence_sinkhorn = sinkhorn_divergence(source_pca, observed_pca, sinkhorn_epsilon)
 
-        def velocity_fn(current_x, seed):
+        def velocity_fn(current_model_x, seed):
+            current_x = (
+                coordinates.to_expression(current_model_x)
+                if coordinates is not None
+                else current_model_x
+            )
             state = encoder.encode(uce_input_expression(cfg, current_x, uce_pca), seed)
             return predict_stream_chunked(model, state, cre_inputs, cfg.gene_chunk_size)
 
         for steps in [int(value) for value in args.integration_steps.split(",")]:
             seed = cfg.seed + interval_index * 100_000
-            predicted = projected_euler_rollout(x0, batch.t0, batch.t1, velocity_fn, steps, seed)
+            predicted_model = projected_euler_rollout(
+                model_x0, batch.t0, batch.t1, velocity_fn, steps, seed
+            )
+            predicted = (
+                coordinates.to_expression(predicted_model)
+                if coordinates is not None
+                else predicted_model
+            )
             predicted_np = predicted.cpu().numpy()
             predicted_pca = pca.transform(np.log1p(predicted_np))
             endpoint_sinkhorn = sinkhorn_divergence(predicted_pca, observed_pca, sinkhorn_epsilon)
@@ -175,6 +195,7 @@ def main() -> None:
                     "integration_steps": steps,
                     "eval_gene_set": name,
                     "n_eval_genes": len(gene_ids) if indices is None else len(indices),
+                    "dynamics_coordinates": "gene_scaled" if coordinates is not None else "count",
                     "uce_expression_preprocessing": cfg.uce_expression_preprocessing,
                     "uce_rollout_expression_preprocessing": (
                         "pca" if cfg.uce_expression_preprocessing == "pca" else "raw"

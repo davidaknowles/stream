@@ -20,6 +20,7 @@
 \newcommand{\uce}{UCE}
 \newcommand{\ag}{AlphaGenome}
 \newcommand{\cre}{cCRE}
+\newcommand{\dd}{\mathrm{d}}
 
 \title{STREAM: sequence-conditioned flow matching for developmental single-cell dynamics}
 \author{}
@@ -78,10 +79,11 @@ and regulatory sequence inputs.
 \stream{} uses two inputs at each CFM interpolation point: a cell-state vector
 and a fixed set of regulatory tokens for each gene. The cell-state vector is
 either expression on the selected gene panel or a frozen 1,280-dimensional
-\uce{} embedding computed from that expression state. The output is always a $G$-dimensional expression velocity,
-where $G$ is the number of modeled genes (Figure~\ref{fig:model}). Thus the
-dynamics, target velocity, and loss are defined in expression space even when
-\uce{} is used for conditioning.
+\uce{} embedding computed from that expression state. The reported output is
+always a $G$-dimensional expression velocity, where $G$ is the number of
+modeled genes (Figure~\ref{fig:model}). The current coordinate contract fits
+and integrates gene-scaled expression $Y=Q^{-1}X$, then returns
+$\dd X/\dd t=Q\,\dd Y/\dd t$ for reporting and endpoint evaluation.
 
 \begin{figure}[t]
 \centering
@@ -107,7 +109,8 @@ $\mathcal{C}_g$ within 100 kb & sequence token vectors & FiLM or cross-attention
 
 \vspace{1em}
 \textbf{Key point:} \uce{} changes the state representation supplied to the
-network; \stream{} still predicts one expression velocity per gene.
+network; \stream{} still returns one expression velocity per gene after the
+fixed inverse gene-scale transform.
 \end{minipage}}
 \caption{\textbf{\stream{} model structure.} Adjacent timepoints are paired by
 minibatch optimal transport. The model observes an interpolated cell state and
@@ -273,7 +276,7 @@ genome references, and cCRE annotations used by the active analyses.
 \caption{\textbf{Data sources used by STREAM.} Counts describe the active
 analysis artifacts after project preprocessing.}
 \label{tab:data_sources}
-\begin{tabular}{p{0.16\linewidth}p{0.29\linewidth}p{0.25\linewidth}p{0.21\linewidth}}
+\begin{tabular}{@{}p{0.15\linewidth}p{0.27\linewidth}p{0.24\linewidth}p{0.20\linewidth}@{}}
 \toprule
 Species & Single-cell data & Gene annotation and genome & cCRE source \\
 \midrule
@@ -281,7 +284,7 @@ Mouse &
 JAX/Shendure mouse prenatal single-cell transcriptional time-lapse;
 11,441,407 cells, 24,552 genes, 43 stages from E8.5 to P0 &
 Ensembl GRCm38.95 gene models; mm10/GRCm38 genome sequence &
-ENCODE/SCREEN mouse cCRE registry in mm10; 926,843 cCRE rows \\
+ENCODE/\allowbreak SCREEN mouse cCRE registry in mm10; 926,843 cCRE rows \\
 \addlinespace
 Zebrafish &
 ZSCAPE 28C control embryos; 1,232,014 control cells retained before
@@ -327,11 +330,13 @@ treated as an out-of-distribution assumption for cross-species transfer.
 
 Let $x \in \mathbb{R}^{G}$ be expression over the selected gene panel and let
 $p_k(x)$ be the empirical distribution at observed timepoint $t_k$. Training is
-defined over adjacent intervals $(t_k,t_{k+1})$. For a sampled pair
-$(x_k,x_{k+1})$ and $\tau \sim \mathcal{U}(0,1)$,
+defined over adjacent intervals $(t_k,t_{k+1})$. Let $q>0$ contain
+training-only per-gene count scales, $Q=\operatorname{diag}(q)$, and
+$y=Q^{-1}x$. For a sampled pair $(x_k,x_{k+1})$ and
+$\tau \sim \mathcal{U}(0,1)$,
 \begin{align}
-x_\tau &= (1-\tau)x_k + \tau x_{k+1}, \\
-\hat v &= \frac{x_{k+1}-x_k}{t_{k+1}-t_k}.
+y_\tau &= (1-\tau)y_k + \tau y_{k+1}, \\
+\hat v_Y &= \frac{y_{k+1}-y_k}{t_{k+1}-t_k}.
 \end{align}
 The model is trained by minimizing
 \begin{equation}
@@ -339,13 +344,16 @@ The model is trained by minimizing
 \sum_{k}
 \mathbb{E}_{\tau,(x_k,x_{k+1})}
 \left[
-\left\| f_\theta(s_\tau,\{\mathbf{Z}_g\}_{g=1}^{G})-\hat v \right\|_2^2
+\left\| f_\theta(s_\tau,\{\mathbf{Z}_g\}_{g=1}^{G})-\hat v_Y \right\|_2^2
 \right],
 \end{equation}
-where $s_\tau=x_\tau$ for expression-state runs and $s_\tau=E(x_\tau)$ for
-online-\uce{} runs. Training pairs are sampled from an entropic minibatch
+where $s_\tau=y_\tau$ for expression-state runs and
+$s_\tau=E(Qy_\tau)$ for online-\uce{} runs. Training pairs are sampled from an entropic minibatch
 optimal transport plan between cells at the two interval endpoints. The OT cost
-is computed in expression space on the selected gene panel.
+remains in count-derived expression or train-only PCA space. The fixed
+transform is inverted before \uce{}, PCA/Sinkhorn scoring, and biological
+reporting. This preserves nonnegativity and avoids stochastic reconstruction
+of counts.
 
 \subsection{UCE-state conditioning}
 
@@ -353,12 +361,13 @@ For \uce{} runs, a frozen 33-layer \uce{} encoder maps the current expression
 state to $E(x)\in\mathbb{R}^{1280}$~\cite{rosen2026uce}. After expression-space
 OT pairing and interpolation, the model input is
 \begin{equation}
-u_\tau=E\left((1-\tau)x_k+\tau x_{k+1}\right).
+u_\tau=E\left(Q[(1-\tau)y_k+\tau y_{k+1}]\right).
 \end{equation}
-The target $\hat v$, prediction, and loss remain expression-valued. During
-rollout, \uce{} is recomputed after every expression update, yielding the closed
-autonomous system $dx/dt=f_\theta(E(x),\{\mathbf Z_g\})$. No destination
-embedding or explicit time input is supplied.
+The target, prediction, and loss are gene-scaled, while the reported velocity
+is $Q\hat v_Y$. During rollout, \uce{} is recomputed after every update using
+$E(Qy)$, yielding the closed autonomous system
+$\dd y/\dd t=f_\theta(E(Qy),\{\mathbf Z_g\})$. No destination embedding or
+explicit time input is supplied.
 
 \subsection{STREAM architecture and baselines}
 

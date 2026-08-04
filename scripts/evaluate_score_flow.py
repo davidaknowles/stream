@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
+from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler, heldout_block_forecast_intervals
 from stream_model.denoise import PCADenoiser
 from stream_model.models import ScoreFlowStreamModel
@@ -38,6 +39,8 @@ def main() -> None:
     supported_contracts = {
         "online_uce_coupled_score_flow_v2",
         "online_uce_population_finetuned_score_flow_v3",
+        "online_uce_gene_scaled_score_flow_v3",
+        "online_uce_gene_scaled_population_score_flow_v4",
     }
     if checkpoint.get("model_contract") not in supported_contracts:
         raise ValueError(f"Expected one of {sorted(supported_contracts)}")
@@ -88,6 +91,8 @@ def main() -> None:
     encoder = build_online_uce_encoder(cfg, selected, device)
     pca = PCADenoiser.load(cfg.resolve_path(args.pca_artifact))
     gene_scale = checkpoint["gene_scale"].to(device)
+    coordinates = coordinates_from_checkpoint(checkpoint, device)
+    perturbation_scale = coordinates.perturbation_scale(gene_scale)
     diffusions = [float(value) for value in args.diffusions.replace(";", ",").split(",")]
     rows = []
 
@@ -99,9 +104,9 @@ def main() -> None:
         observed_pca = pca.transform_counts(observed)
         persistence = sinkhorn_divergence(source_pca, observed_pca, epsilon=0.05)
 
-        def predict(current_x, tau, seed):
+        def predict(current_y, tau, seed):
             # KNN/metacell references are unavailable causally; rollout always encodes the current raw state.
-            state = encoder.encode(current_x, seed)
+            state = encoder.encode(coordinates.to_expression(current_y), seed)
             return predict_score_flow_chunked(model, state, tau, cre_inputs, cfg.gene_chunk_size)
 
         controls = [("autonomous", "not_used", 0.0), ("coupled", "not_used", 0.0)]
@@ -116,19 +121,20 @@ def main() -> None:
             replicate_rows = []
             for replicate in range(replicates):
                 seed = cfg.seed + interval_index * 10_000 + replicate
-                predicted = score_flow_rollout(
-                    torch.as_tensor(source, device=device),
+                predicted_y = score_flow_rollout(
+                    coordinates.to_model(torch.as_tensor(source, device=device)),
                     batch.t0,
                     batch.t1,
                     predict,
-                    gene_scale,
+                    perturbation_scale,
                     args.steps,
                     seed,
                     diffusion=diffusion,
                     noise_amplitude=cfg.score_flow_noise_scale,
                     dynamics_mode=dynamics_mode,
                     score_control="learned" if score_control == "not_used" else score_control,
-                ).cpu().numpy()
+                )
+                predicted = coordinates.to_expression(predicted_y).cpu().numpy()
                 endpoint = sinkhorn_divergence(pca.transform_counts(predicted), observed_pca, epsilon=0.05)
                 replicate_rows.append(
                     {

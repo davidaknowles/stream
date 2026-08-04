@@ -422,6 +422,106 @@ def test_pca_tensor_transform_matches_numpy_and_is_differentiable():
     assert torch.isfinite(counts.grad).all()
 
 
+def test_gene_scaled_coordinates_preserve_expression_paths_and_noise():
+    torch = pytest.importorskip("torch")
+    from stream_model.coordinates import GeneScaleCoordinates
+    from stream_model.ot import cfm_interpolate
+
+    q = torch.tensor([2.0, 4.0, 0.5])
+    coordinates = GeneScaleCoordinates(q)
+    x0 = torch.tensor([[2.0, 8.0, 1.0]])
+    x1 = torch.tensor([[6.0, 4.0, 2.0]])
+    tau = torch.tensor([[0.25]])
+    y0 = coordinates.to_model(x0)
+    y1 = coordinates.to_model(x1)
+    yt, velocity_y, _ = cfm_interpolate(y0, y1, 0.0, 2.0, tau=tau)
+    xt, velocity_x, _ = cfm_interpolate(x0, x1, 0.0, 2.0, tau=tau)
+
+    assert torch.allclose(coordinates.to_expression(y0), x0)
+    assert torch.allclose(coordinates.to_expression(yt), xt)
+    assert torch.allclose(coordinates.to_expression(velocity_y), velocity_x)
+    noise = torch.tensor([[1.0, -0.5, 2.0]])
+    assert torch.allclose(
+        coordinates.to_expression(yt + 0.2 * noise),
+        xt + 0.2 * q * noise,
+    )
+
+    from stream_model.score_flow import stochastic_interpolant
+
+    tau_score = torch.tensor([[0.4]])
+    scaled_state, scaled_velocity, _, _ = stochastic_interpolant(
+        y0, y1, torch.ones(3), 0.0, 2.0, tau=tau_score, noise=noise
+    )
+    count_state, count_velocity, _, _ = stochastic_interpolant(
+        x0, x1, q, 0.0, 2.0, tau=tau_score, noise=noise
+    )
+    assert torch.allclose(coordinates.to_expression(scaled_state), count_state)
+    assert torch.allclose(coordinates.to_expression(scaled_velocity), count_velocity)
+
+
+def test_gene_scaled_rollout_equals_mapped_count_space_rollout():
+    torch = pytest.importorskip("torch")
+    from stream_model.coordinates import GeneScaleCoordinates
+    from stream_model.rollout import projected_euler_rollout
+
+    coordinates = GeneScaleCoordinates(torch.tensor([2.0, 5.0]))
+    x0 = torch.tensor([[4.0, 10.0]])
+
+    def velocity_y(y, seed):
+        del y, seed
+        return torch.tensor([[0.5, -0.25]])
+
+    predicted_y = projected_euler_rollout(
+        coordinates.to_model(x0), 0.0, 1.0, velocity_y, steps=4, seed=1
+    )
+    predicted_x = projected_euler_rollout(
+        x0,
+        0.0,
+        1.0,
+        lambda x, seed: coordinates.to_expression(velocity_y(x, seed)),
+        steps=4,
+        seed=1,
+    )
+    assert torch.allclose(coordinates.to_expression(predicted_y), predicted_x)
+
+
+def test_coordinate_checkpoint_loader_preserves_legacy_score_flow_contract():
+    torch = pytest.importorskip("torch")
+    from stream_model.coordinates import coordinates_from_checkpoint
+
+    q = torch.tensor([2.0, 5.0])
+    legacy = coordinates_from_checkpoint({"gene_scale": q, "config": {}})
+    scaled = coordinates_from_checkpoint(
+        {"gene_scale": q, "dynamics_coordinates": "gene_scaled"}
+    )
+    x = torch.tensor([[4.0, 10.0]])
+    assert legacy.mode == "count"
+    assert torch.equal(legacy.to_model(x), x)
+    assert torch.equal(legacy.perturbation_scale(x), q)
+    assert torch.equal(scaled.to_model(x), torch.tensor([[2.0, 2.0]]))
+    assert torch.equal(scaled.perturbation_scale(x), torch.ones(2))
+
+
+def test_training_gene_scale_estimator_uses_each_stage():
+    torch = pytest.importorskip("torch")
+    from stream_model.coordinates import estimate_sampler_gene_scale
+
+    class Sampler:
+        intervals = [("a", "b"), ("b", "c")]
+        batch_size = 9
+
+        def sample_day(self, day):
+            offset = {"a": 0.0, "b": 2.0, "c": 4.0}[day]
+            base = np.arange(self.batch_size, dtype=np.float32)[:, None]
+            return np.hstack([base + offset, 2.0 * base + offset])
+
+    sampler = Sampler()
+    scale = estimate_sampler_gene_scale(sampler, cells_per_day=4)
+    assert scale.shape == (2,)
+    assert torch.all(scale > 0)
+    assert sampler.batch_size == 9
+
+
 def test_knn_smoothing_uses_local_profiles_and_preserves_library_size():
     from stream_model.denoise import knn_smooth_selected_counts
 
@@ -1014,6 +1114,46 @@ def test_evaluate_intervals_reports_displacement_r2():
 
     metrics = evaluate_intervals(Config(), Sampler(), ZeroModel(), n_batches=1)
     assert metrics.loc[0, "displacement_r2"] == pytest.approx(-1.5)
+
+
+def test_evaluate_intervals_maps_gene_scaled_velocity_back_to_expression():
+    torch = pytest.importorskip("torch")
+    from stream_model.coordinates import GeneScaleCoordinates
+    from stream_model.data import IntervalBatch
+    from stream_model.evaluate import evaluate_intervals
+
+    class Config:
+        ot_epsilon = 0.1
+        ot_iterations = 20
+
+    class Sampler:
+        def sample(self):
+            return IntervalBatch(
+                x0=np.zeros((1, 2), dtype=np.float32),
+                x1=np.asarray([[2.0, 4.0]], dtype=np.float32),
+                t0=0.0,
+                t1=1.0,
+                day0="0",
+                day1="1",
+            )
+
+    class UnitScaledVelocity(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, state):
+            return torch.ones_like(state) + 0.0 * self.anchor
+
+    metrics = evaluate_intervals(
+        Config(),
+        Sampler(),
+        UnitScaledVelocity(),
+        n_batches=1,
+        coordinates=GeneScaleCoordinates(torch.tensor([2.0, 4.0])),
+    )
+    assert metrics.loc[0, "loss"] == pytest.approx(0.0)
+    assert metrics.loc[0, "displacement_mae"] == pytest.approx(0.0)
 
 
 def test_evaluate_intervals_uses_auxiliary_state_with_expression_target():

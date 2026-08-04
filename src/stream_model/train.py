@@ -113,6 +113,8 @@ def artifact_stem(config, variant: str | None = None) -> str:
         stem = f"{variant}_online_uce"
     else:
         stem = f"{variant}_{config.cell_state}"
+    if getattr(config, "dynamics_coordinates", "count") == "gene_scaled":
+        stem = f"{stem}_gene_scaled"
     return f"{stem}_{config.experiment_label}" if getattr(config, "experiment_label", "") else stem
 
 
@@ -216,6 +218,7 @@ def build_fixed_validation_batches(
     state_encoder=None,
     seed: int | None = None,
     pca=None,
+    coordinates=None,
 ) -> list[FixedValidationBatch]:
     """Materialize fixed, interval-stratified OT-CFM validation examples."""
 
@@ -291,12 +294,14 @@ def build_fixed_validation_batches(
                 )
             else:
                 target = _raw_target
+            if coordinates is not None:
+                target = coordinates.to_model(target)
             if state_encoder is not None:
                 state_t = state_encoder.encode(
                     uce_input_expression(config, xt, pca, denoised_xt), seed=batch_seed
                 )
             elif sampled.state0 is None:
-                state_t = xt
+                state_t = coordinates.to_model(xt) if coordinates is not None else xt
             else:
                 state0 = torch.as_tensor(sampled.state0, device=device)
                 state1 = torch.as_tensor(sampled.state1, device=device)
@@ -393,6 +398,7 @@ def evaluate_observed_rollouts(
     steps: int,
     loss_gene_indices: list[int] | np.ndarray | torch.Tensor | None = None,
     pca=None,
+    coordinates=None,
 ) -> dict[str, float]:
     """Diagnose autonomous endpoint prediction on observed validation intervals."""
 
@@ -404,22 +410,33 @@ def evaluate_observed_rollouts(
     model.eval()
     for interval_index, batch in enumerate(batches):
         x0 = batch.x0.to(device)
+        model_x0 = coordinates.to_model(x0) if coordinates is not None else x0
 
-        def velocity_fn(current_x, seed):
+        def velocity_fn(current_model_x, seed):
+            current_x = (
+                coordinates.to_expression(current_model_x)
+                if coordinates is not None
+                else current_model_x
+            )
             state = (
                 state_encoder.encode(uce_input_expression(config, current_x, pca), seed)
                 if state_encoder is not None
-                else current_x
+                else current_model_x
             )
             return _predict_loss_genes(model, state, cre_inputs, config.gene_chunk_size, None)
 
-        predicted = projected_euler_rollout(
-            x0,
+        predicted_model = projected_euler_rollout(
+            model_x0,
             batch.t0,
             batch.t1,
             velocity_fn,
             steps=steps,
             seed=int(config.seed) + interval_index * 10_000,
+        )
+        predicted = (
+            coordinates.to_expression(predicted_model)
+            if coordinates is not None
+            else predicted_model
         )
         interval_metrics.append(
             mean_shift_metrics(batch.x0.numpy(), batch.x1.numpy(), predicted.cpu().numpy(), indices)
@@ -449,6 +466,7 @@ def train_steps(
     validation_rollout_steps: int = 4,
     checkpoint_callback: Callable | None = None,
     pca=None,
+    coordinates=None,
 ) -> TrainingResult:
     device = next(model.parameters()).device
     loss_index_tensor = _loss_gene_index_tensor(loss_gene_indices, device)
@@ -537,13 +555,15 @@ def train_steps(
                     None if paired_pool["state1"] is None else paired_pool["state1"][pool_cursor:end]
                 )
                 pool_cursor = end
+            if coordinates is not None:
+                target = coordinates.to_model(target)
             if state_encoder is not None:
                 state_t = state_encoder.encode(
                     uce_input_expression(config, xt, pca, denoised_xt),
                     seed=int(config.seed) + global_step * config.batch_size,
                 )
             elif paired_state0 is None:
-                state_t = xt
+                state_t = coordinates.to_model(xt) if coordinates is not None else xt
             else:
                 state_t = (1.0 - tau) * paired_state0 + tau * paired_state1
             optimizer.zero_grad(set_to_none=True)
@@ -642,6 +662,7 @@ def train_steps(
                     validation_rollout_steps,
                     loss_gene_indices,
                     pca,
+                    coordinates,
                 )
             )
         validation_metrics.append(row)

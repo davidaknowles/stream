@@ -108,6 +108,32 @@ The initial experiment will not attempt to model division events explicitly,
 infer lineage trees, or reproduce raw count sampling. A growth-weighted
 extension is described as a second stage.
 
+\section{Gene-scaled dynamical coordinates}
+
+Let $q\in\R^G_{>0}$ be fixed per-gene scales estimated from raw training
+counts, $Q=\operatorname{diag}(q)$, and
+\begin{equation}
+  Y=Q^{-1}X,\qquad X=QY.
+  \label{eq:scaled-coordinates}
+\end{equation}
+The implementation performs interpolation, velocity prediction, score
+matching, and ODE/SDE integration in $Y$. Before every online \uce{} call and
+endpoint metric, it deterministically returns to count-like expression with
+$X=QY$. OT and train-only PCA remain in $X$. Because $q_g>0$, nonnegative
+projection is equivalent in both coordinate systems.
+
+For a general diffusion,
+\begin{equation}
+  \dd Y_t=\mu_Y(Y_t)\dd t+G_Y(Y_t)\dd W_t
+  \quad\Longleftrightarrow\quad
+  \dd X_t=Q\mu_Y(Q^{-1}X_t)\dd t+QG_Y(Q^{-1}X_t)\dd W_t.
+  \label{eq:coordinate-sde}
+\end{equation}
+Thus the previous gene-scaled Gaussian noise $Q\dd W$ becomes isotropic in
+$Y$, and an ordinary MSE on $Y$-velocity is the intended gene-normalized loss
+in count space. The fixed $q$ is now a checkpointed boundary transform rather
+than a factor repeated throughout the model equations.
+
 \section{Autonomous neural SDE}
 
 We propose the expression-space stochastic differential equation
@@ -208,6 +234,19 @@ bounded alternative used to avoid numerical singularities.
 Here $\Sigma$ is a fixed diagonal matrix of training-only per-gene expression
 scales. It makes perturbations comparable across genes while retaining
 gene-valued states and outputs.
+
+Equations~\ref{eq:stochastic-interpolant}--\ref{eq:coupled-fields} show the
+count-space equivalent. With $\Sigma=Q$, the implemented model-coordinate
+form is
+\begin{align}
+  Y_\tau&=(1-\tau)y_0+\tau y_1+\gamma(\tau)z,\\
+  b_Y(y,\tau)&=u_Y(y,\tau)
+    +\frac{\dot\gamma(\tau)}{\Delta t}e_\theta(y,\tau),\\
+  s_Y(y,\tau)&=-\frac{e_\theta(y,\tau)}{\gamma(\tau)}.
+  \label{eq:scaled-coupled-fields}
+\end{align}
+The model receives $E(QY_\tau)$, predicts all gene-valued quantities in $Y$,
+and uses $X=QY$ only at UCE and evaluation boundaries.
 
 \subsection{Coupled conditional-moment heads}
 

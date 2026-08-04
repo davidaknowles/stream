@@ -105,6 +105,20 @@ A developmental clock should instead perturb all genes coherently along the
 same local velocity direction. Residual gene-wise diffusion may still be
 useful, but it should be represented and evaluated separately.
 
+The coordinate transform introduced below also simplifies the non-clock model.
+With $Y=Q^{-1}X$, a deterministic count-space field and SDE transform as
+\begin{align}
+  \dd X&=b_X(X)\dd t+QA_Y(Y)\dd W,
+  &
+  \dd Y&=Q^{-1}b_X(QY)\dd t+A_Y(Y)\dd W.
+  \label{eq:general-coordinate-sde}
+\end{align}
+Thus the existing $Q\dd W$ perturbation becomes identity-scaled in $Y$.
+Likewise, ordinary flow matching in $Y$ is exactly count-space flow matching
+with each velocity divided by its gene scale. This coordinate choice applies
+to deterministic CFM, regular score-flow, explicit SDE rollout, and the latent
+clock; it is not specific to pseudotime.
+
 \section{Model}
 
 \subsection{Notation and dimensions}
@@ -120,8 +134,9 @@ have the following dimensions:
 \toprule
 Variable & Dimension & Meaning \\
 \midrule
-$x,X_t,q,u,d,\widehat d$ & $\R^G$ & Expression state, gene scales, or gene-valued direction/displacement \\
-$E(x)$ & $\R^D$ & Frozen \uce{} cell-state representation; currently $D=1280$ \\
+$X_t,q$ & $\R^G$ & Count-like expression state and positive gene scales \\
+$Y_t,u,d,\widehat d$ & $\R^G$ & Gene-scaled state, direction, or displacement \\
+$E(X)=E(QY)$ & $\R^D$ & Frozen \uce{} state after returning to expression coordinates; currently $D=1280$ \\
 $Z$ & $\R^{G\times K\times C}$ & Padded gene-by-regulatory-token representations \\
 $S_t,a_\phi,\sigma_\phi$ & Scalars & Progress, expected clock rate, and clock variability \\
 $W_t^S,z,\widehat z$ & Scalars & Clock Brownian motion, sampled clock noise, and predicted clock noise \\
@@ -135,40 +150,39 @@ $\tau,\gamma(\tau),\rho$ & Scalars & Interpolation coordinate, bridge schedule, 
 \label{tab:dimensions}
 \end{table}
 
-The previously undefined $q=(q_1,\ldots,q_G)\in\R^G_{>0}$ is a fixed vector
-of training-only per-gene expression scales, estimated from endpoint counts
-with a nonzero floor. It defines the dimensionless scaled inner product and
-norm
+The vector $q=(q_1,\ldots,q_G)\in\R^G_{>0}$ contains fixed training-only
+per-gene expression scales estimated from endpoint counts with a nonzero
+floor. Define $Q=\operatorname{diag}(q)$ and use the model coordinate
 \begin{equation}
-  \langle y,z\rangle_q
-  =G^{-1}\sum_{g=1}^{G}\frac{y_gz_g}{q_g^2},
-  \qquad
-  \lVert y\rVert_q=\sqrt{\langle y,y\rangle_q}.
-  \label{eq:q-norm}
+  Y=Q^{-1}X,\qquad X=QY.
+  \label{eq:coordinate-transform}
 \end{equation}
-Thus $q_g$, $x_g$, and $u_g$ have expression units. The latent progress $S$
-is dimensionless, $a_\phi$ has units of inverse experimental time, and
-$\sigma_\phi$ has units of inverse square-root time. Consequently
-$u_\theta\,\dd S$ has expression units. The bridge coordinate $\tau$, bridge
-amplitude $\rho$, and clock draw $z$ are dimensionless. Crucially,
-$z\in\R$ is one scalar shared across all genes for one cell and path, unlike
-the regular score-flow noise $\epsilon\in\R^G$.
+All dynamics, losses, direction normalization, and nonnegative projection are
+performed in $Y$. The fixed $q$ appears only at system boundaries: $X=QY$ is
+passed to \uce{}, PCA/Sinkhorn evaluation, and biological reporting.
+Gene-scaled coordinates remain nonnegative and avoid the library-size state
+needed to invert log normalization. The latent progress $S$ is dimensionless,
+$a_\phi$ has units of inverse experimental time, and $\sigma_\phi$ has units
+of inverse square-root time. The bridge coordinate $\tau$, bridge amplitude
+$\rho$, and clock draw $z$ are dimensionless. Crucially, $z\in\R$ is one
+scalar shared across all genes for one cell and path, unlike the regular
+score-flow noise $\epsilon\in\R^G$.
 
 \subsection{Latent stochastic clock}
 
 Introduce a scalar biological-progress process $S_t$ and write
 \begin{align}
-  \dd S_t &= a_\phi(X_t)\,\dd t + \sigma_\phi(X_t)\,\dd W_t^{S},
+  \dd S_t &= a_\phi(Y_t)\,\dd t + \sigma_\phi(Y_t)\,\dd W_t^{S},
   \label{eq:clock-sde}\\
-  \dd X_t &= u_\theta(X_t)\,\dd S_t
-             + G_\psi(X_t)\,\dd W_t^{\perp}.
+  \dd Y_t &= u_\theta(Y_t)\,\dd S_t
+             + G_\psi(Y_t)\,\dd W_t^{\perp}.
   \label{eq:expression-sde}
 \end{align}
 The scalar clock rate and variability are state-dependent,
 \begin{equation}
-  a_\phi(x)=\operatorname{softplus}\!\left(h_a(E(x))\right),
+  a_\phi(y)=\operatorname{softplus}\!\left(h_a(E(Qy))\right),
   \qquad
-  \sigma_\phi(x)=\operatorname{softplus}\!\left(h_\sigma(E(x))\right),
+  \sigma_\phi(y)=\operatorname{softplus}\!\left(h_\sigma(E(Qy))\right),
   \label{eq:clock-heads}
 \end{equation}
 where $h_a$ and $h_\sigma$ are small heads on frozen \uce{} state. The
@@ -191,25 +205,27 @@ first implementation should test a monotone clock using positive lognormal
 increments:
 \begin{equation}
   \Delta S_k
-  = a_\phi(X_k)\Delta t
+  = a_\phi(Y_k)\Delta t
     \exp\!\left[
-      \sigma_\phi(X_k)\sqrt{\Delta t}\,\epsilon_k
-      -\frac{1}{2}\sigma_\phi(X_k)^2\Delta t
+      \sigma_\phi(Y_k)\sqrt{\Delta t}\,\epsilon_k
+      -\frac{1}{2}\sigma_\phi(Y_k)^2\Delta t
     \right],
   \qquad \epsilon_k\sim\N(0,1).
   \label{eq:positive-increment}
 \end{equation}
 The correction in the exponent preserves
-$\E[\Delta S_k\mid X_k]=a_\phi(X_k)\Delta t$. The expression update is
+$\E[\Delta S_k\mid Y_k]=a_\phi(Y_k)\Delta t$. The model-coordinate update is
 \begin{equation}
-  X_{k+1}=\Pi_+\!\left[
-    X_k+u_\theta(X_k)\Delta S_k
-    +G_\psi(X_k)\sqrt{\Delta t}\,\epsilon_k^\perp
+  Y_{k+1}=\Pi_+\!\left[
+    Y_k+u_\theta(Y_k)\Delta S_k
+    +G_\psi(Y_k)\sqrt{\Delta t}\,\epsilon_k^\perp
   \right],
   \label{eq:clock-rollout}
 \end{equation}
-where $\Pi_+$ projects expression to the nonnegative orthant. This
-reparameterization is differentiable with respect to the model parameters.
+where $\Pi_+$ projects scaled expression to the nonnegative orthant. Count-like
+expression is recovered exactly as $X_{k+1}=QY_{k+1}$ before \uce{} or
+evaluation. This reparameterization is differentiable with respect to the
+model parameters.
 
 Gamma increments or an integrated positive stochastic rate can be considered
 later. The lognormal increment is simple, has a direct
@@ -220,33 +236,29 @@ draw per cell and step.
 
 Without a constraint, multiplying $u_\theta$ by a constant and dividing
 $a_\phi$ by the same constant leaves the expression dynamics unchanged. To
-separate direction from progress, normalize the raw regulatory velocity by a
-robust gene-space norm:
+separate direction from progress, predict velocity directly in $Y$ coordinates
+and use an ordinary root-mean-square normalization:
 \begin{equation}
-  u_\theta(x)
-  = \frac{v_\theta(x)}{
-      \sqrt{G^{-1}\sum_{g=1}^{G}
-      \left[v_{\theta,g}(x)/q_g\right]^2}+\epsilon},
+  u_\theta(y)
+  = \frac{v_\theta(y)}
+      {\sqrt{G^{-1}\sum_{g=1}^{G}v_{\theta,g}(y)^2}+\epsilon},
   \label{eq:direction-normalization}
 \end{equation}
-where $q_g$ is a fixed training-only robust gene scale. The clock increment
-then determines distance traveled in scaled expression space. A less invasive
+The clock increment then determines distance traveled in scaled expression
+space. A less invasive
 first experiment can freeze the pretrained $v_\theta$ and learn only the two
 clock heads; Equation~\ref{eq:direction-normalization} is preferable when the
 direction and clock are later trained jointly.
 
 \subsection{Separating clock and residual noise}
 
-Clock noise is rank one locally: its expression-space direction is
-$u_\theta(x)$. Residual diffusion should not be allowed to relearn the same
+Clock noise is rank one locally: its model-coordinate direction is
+$u_\theta(y)$. Residual diffusion should not be allowed to relearn the same
 component. Given an unconstrained residual draw $r$, project it away from the
 scaled velocity direction,
 \begin{equation}
   r_\perp
-  = r-u\frac{\langle r,u\rangle_q}{\langle u,u\rangle_q},
-  \qquad
-  \langle y,z\rangle_q
-  = G^{-1}\sum_g\frac{y_gz_g}{q_g^2}.
+  = r-u\frac{r^Tu}{u^Tu}.
   \label{eq:orthogonal-noise}
 \end{equation}
 This decomposition makes the interpretation testable: $\sigma_\phi$ controls
@@ -262,12 +274,12 @@ For each observed interval $(t_0,t_1)$, independently sample source cells
 $\{x_i^0\}_{i=1}^{B}$ and target cells $\{x_j^1\}_{j=1}^{C}$. Roll $M$
 particles from each source according to Equation~\ref{eq:clock-rollout}. No
 cell-level OT coupling is constructed. Compare the generated endpoint
-population $\widehat{\mathcal X}_1$ with the observed target population
-$\mathcal X_1$ using
+model-coordinate population $\widehat{\mathcal Y}_1$ with the observed target
+population $\mathcal X_1$ after deterministic conversion back to expression:
 \begin{align}
   \mathcal L_{\mathrm{endpoint}}
   =&\;S_\varepsilon\!\left(
-      P(\widehat{\mathcal X}_1),P(\mathcal X_1)
+      P(Q\widehat{\mathcal Y}_1),P(\mathcal X_1)
     \right)
   +\lambda_m\mathcal L_{\mathrm{mean}}
   +\lambda_C\mathcal L_{\mathrm{cov}},
@@ -300,33 +312,35 @@ Equation~\ref{eq:direction-normalization}, a rate anchor, and supervision
 across multiple interval lengths are therefore required before interpreting
 $a_\phi$ as latent progress rate.
 
-Given coupled endpoints, define the scaled chord length and direction
+Given coupled expression endpoints, first set $y_i=Q^{-1}x_i$, then define the
+model-coordinate chord length and direction
 \begin{equation}
-  d=x_1-x_0,\qquad
-  \ell=\lVert d\rVert_q
-      =\sqrt{G^{-1}\sum_g(d_g/q_g)^2},\qquad
+  d=y_1-y_0,\qquad
+  \ell=\sqrt{G^{-1}\sum_gd_g^2},\qquad
   \widehat d=d/(\ell+\epsilon).
   \label{eq:clock-chord}
 \end{equation}
 A clock-aligned stochastic interpolant perturbs the linear path using one
 scalar Gaussian variable shared by every gene:
 \begin{align}
-  X_\tau
-  &=(1-\tau)x_0+\tau x_1+\rho\gamma(\tau)\widehat d\,z,
+  Y_\tau
+  &=(1-\tau)y_0+\tau y_1+\rho\gamma(\tau)\widehat d\,z,
   &z&\sim\N(0,1),
   \label{eq:clock-interpolant}\\
-  \partial_\tau X_\tau
+  \partial_\tau Y_\tau
   &=d+\rho\gamma'(\tau)\widehat d\,z.
   \label{eq:clock-flow-target}
 \end{align}
 Unlike the current gene-wise Gaussian interpolant, the random term changes
 distance along the endpoint chord rather than independently perturbing every
-gene. Here $\rho>0$ is a fixed dimensionless bridge-noise amplitude, analogous
+gene. Mapping this path through $Q$ exactly gives a count-space linear
+interpolant with gene-scaled noise. Here $\rho>0$ is a fixed dimensionless
+bridge-noise amplitude, analogous
 to the fixed noise amplitude in the current stochastic interpolant. The model
-predicts a normalized direction $u_\theta(X_\tau)$, positive rate
-$a_\phi(X_\tau)$, and scalar noise
-$\widehat z_\psi(X_\tau,\tau)\in\R$. The rollout clock scale
-$\sigma_\phi(X_\tau)$ is subsequently calibrated and fine-tuned by the
+predicts a normalized direction $u_\theta(Y_\tau)$, positive rate
+$a_\phi(Y_\tau)$, and scalar noise
+$\widehat z_\psi(Y_\tau,\tau)\in\R$, all conditioned on $E(QY_\tau)$. The
+rollout clock scale $\sigma_\phi(Y_\tau)$ is subsequently calibrated and fine-tuned by the
 endpoint objective. A coupled clock-flow readout has the form
 \begin{equation}
   f_{\mathrm{clock}}
@@ -336,18 +350,18 @@ endpoint objective. A coupled clock-flow readout has the form
   \label{eq:coupled-clock-flow}
 \end{equation}
 while the score component tangent to the trajectory is constructed from the
-same scalar estimate. Define the dual scaled direction
+same scalar estimate. Since $G^{-1}u^Tu=1$, define the Euclidean dual direction
 \begin{equation}
-  (u_q^*)_g=\frac{u_g}{Gq_g^2},
+  u^*=\frac{u}{G},
   \qquad
-  u_q^{*T}u=\lVert u\rVert_q^2=1.
+  u^{*T}u=1.
   \label{eq:dual-direction}
 \end{equation}
 The tangent ambient-score vector is then
 \begin{equation}
   s_\parallel
   =-\frac{\widehat z_\psi}
-          {\rho\gamma(\tau)+\epsilon}\,u_q^*.
+          {\rho\gamma(\tau)+\epsilon}\,u^*.
   \label{eq:tangent-clock-score}
 \end{equation}
 Thus the flow and score cannot disagree about the latent clock fluctuation.
@@ -362,7 +376,7 @@ An initial simulation-free objective can combine
   \mathcal L_{\mathrm{clock\mbox{-}FM}}
   =\mathcal L_{\mathrm{flow}}
    +\lambda_z\lVert\widehat z_\psi-z\rVert^2
-   +\lambda_d\left[1-\cos_q(u_\theta,\widehat d)\right]
+   +\lambda_d\left[1-\cos(u_\theta,\widehat d)\right]
    +\lambda_a(\log a_\phi)^2.
   \label{eq:clock-fm-loss}
 \end{equation}
@@ -474,9 +488,9 @@ should not be absorbed into one noise parameter.
 \toprule
 Arm & Dynamics & Learned additions & Question \\
 \midrule
-A & $\dd X=v_\theta\dd t$ & None & Fixed-clock persistence-relative baseline \\
-B & $\dd X=a_\phi u_\theta\dd t$ & Deterministic rate & Does state-dependent speed help? \\
-C & $\dd X=u_\theta\dd S$ & Rate and scalar clock noise & Does variable progress improve endpoint prediction? \\
+A & $\dd Y=v_\theta\dd t$ & None & Fixed-clock persistence-relative baseline \\
+B & $\dd Y=a_\phi u_\theta\dd t$ & Deterministic rate & Does state-dependent speed help? \\
+C & $\dd Y=u_\theta\dd S$ & Rate and scalar clock noise & Does variable progress improve endpoint prediction? \\
 D & Current score SDE & Gene-wise score/noise & Is generic diffusion sufficient? \\
 E & Clock plus $G_\psi\dd W^\perp$ & Clock and residual noise & Is transverse stochasticity additionally required? \\
 \bottomrule
@@ -531,6 +545,10 @@ variance in a small number of cells.
 The implementation should preserve the existing separation between reusable
 model code and atlas-specific scripts:
 \begin{enumerate}
+  \item Fit $q$ from raw training cells only and add a checkpointed
+        $Y=Q^{-1}X$ coordinate transform. Keep OT/PCA and \uce{} in $X$, but
+        perform interpolation, velocity loss, score matching, and rollout in
+        $Y$. Preserve legacy count-space checkpoint contracts.
   \item Add reusable scalar rate and clock-noise heads operating on frozen
         \uce{} state. Initialize the deterministic rate near one and clock
         noise near zero.

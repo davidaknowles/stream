@@ -21,6 +21,7 @@ CELLS_PER_INTERVAL="${CELLS_PER_INTERVAL:-128}"
 INTEGRATION_STEPS="${INTEGRATION_STEPS:-4,8,16}"
 PCA_CELLS="${PCA_CELLS:-10000}"
 CRE_TOKEN_ARRAYS="${CRE_TOKEN_ARRAYS:-}"
+CHECKPOINT="${CHECKPOINT:-}"
 cd "$PROJECT_ROOT"
 mkdir -p logs
 export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
@@ -35,4 +36,5 @@ if [[ -n "$EVAL_GENE_SUBSET" ]]; then
   done
 fi
 if [[ -n "$CRE_TOKEN_ARRAYS" ]]; then args+=(--cre-token-arrays "$CRE_TOKEN_ARRAYS"); fi
+if [[ -n "$CHECKPOINT" ]]; then args+=(--checkpoint "$CHECKPOINT"); fi
 "$STREAM_PYTHON" scripts/evaluate_causal_stream.py "${args[@]}"

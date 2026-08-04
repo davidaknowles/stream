@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
+from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler, intervals_with_skips
 from stream_model.denoise import PCADenoiser
 from stream_model.models import ScoreFlowStreamModel
@@ -72,8 +73,12 @@ def main() -> None:
 
     checkpoint_path = StreamConfig().resolve_path(args.checkpoint)
     parent = torch.load(checkpoint_path, map_location="cpu")
-    if parent.get("model_contract") != "online_uce_coupled_score_flow_v2":
-        raise ValueError("Population fine-tuning requires an online_uce_coupled_score_flow_v2 checkpoint")
+    supported_parents = {
+        "online_uce_coupled_score_flow_v2",
+        "online_uce_gene_scaled_score_flow_v3",
+    }
+    if parent.get("model_contract") not in supported_parents:
+        raise ValueError(f"Population fine-tuning requires one of {sorted(supported_parents)}")
     saved = parent["config"]
     cfg = StreamConfig.from_yaml(args.config)
     apply_config_overrides(
@@ -92,6 +97,8 @@ def main() -> None:
         setattr(cfg, name, saved[name])
     cfg.uce_expression_preprocessing = "raw"
     cfg.gene_chunk_size = args.gene_chunk_size
+    coordinates = coordinates_from_checkpoint(parent, device="cpu")
+    cfg.dynamics_coordinates = coordinates.mode
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
@@ -145,25 +152,30 @@ def main() -> None:
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate)
     encoder = build_online_uce_encoder(cfg, selected, device)
     gene_scale = parent["gene_scale"].to(device)
+    coordinates = coordinates_from_checkpoint(parent, device)
+    perturbation_scale = coordinates.perturbation_scale(gene_scale)
     diffusions = parse_float_list(args.diffusions)
     output_path = cfg.out_dir / f"model_score_flow_{cfg.model_variant}_{args.experiment_label}.pt"
     metrics_path = cfg.out_dir / f"train_metrics_score_flow_{cfg.model_variant}_{args.experiment_label}.csv"
     metrics: list[dict[str, float | int | str]] = []
 
-    def predict(current_x, tau, seed):
+    def predict(current_y, tau, seed):
         # UCE tokenization is discrete: use its current-state value but truncate df/dx through UCE.
-        state = encoder.encode(current_x, seed)
+        state = encoder.encode(coordinates.to_expression(current_y), seed)
         return predict_score_flow_chunked(model, state, tau, cre_inputs, cfg.gene_chunk_size)
 
     def endpoint_objective(source, observed, t0, t1, diffusion, seed):
-        deterministic = differentiable_score_flow_rollout(
-            source, t0, t1, predict, gene_scale, args.rollout_steps, seed, 0.0,
+        source_y = coordinates.to_model(source)
+        deterministic_y = differentiable_score_flow_rollout(
+            source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, 0.0,
             cfg.score_flow_noise_scale, args.particles,
         )
-        stochastic = differentiable_score_flow_rollout(
-            source, t0, t1, predict, gene_scale, args.rollout_steps, seed, diffusion,
+        stochastic_y = differentiable_score_flow_rollout(
+            source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, diffusion,
             cfg.score_flow_noise_scale, args.particles,
         )
+        deterministic = coordinates.to_expression(deterministic_y)
+        stochastic = coordinates.to_expression(stochastic_y)
         repeated_source = source.repeat_interleave(args.particles, dim=0)
         deterministic_loss, deterministic_metrics = population_endpoint_loss(
             deterministic, observed, repeated_source, pca, gene_scale,
@@ -200,7 +212,12 @@ def main() -> None:
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "config": cfg.to_dict(),
-            "model_contract": "online_uce_population_finetuned_score_flow_v3",
+            "model_contract": (
+                "online_uce_gene_scaled_population_score_flow_v4"
+                if coordinates.mode == "gene_scaled"
+                else "online_uce_population_finetuned_score_flow_v3"
+            ),
+            "dynamics_coordinates": coordinates.mode,
             "gene_ids": gene_ids,
             "cre_token_arrays": str(cre_path),
             "timepoint_split": str(split_path),

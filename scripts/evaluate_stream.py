@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 
 from stream_model.config import StreamConfig, apply_config_overrides
+from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler
 from stream_model.evaluate import ZeroVelocityBaseline, evaluate_intervals
 from stream_model.train import artifact_stem, build_model, load_cre_npz
@@ -104,11 +105,17 @@ def main() -> None:
     if args.baseline is not None:
         model = ZeroVelocityBaseline(len(gene_ids)).to(device)
         stem = args.baseline
+        coordinates = None
     else:
         model = build_model(cfg, n_genes=len(gene_ids), cre_dim=cre_dim).to(device)
         stem = artifact_stem(cfg)
         checkpoint_path = cfg.resolve_path(args.checkpoint) if args.checkpoint else cfg.out_dir / f"model_{stem}.pt"
         ckpt = torch.load(checkpoint_path, map_location=device)
+        coordinate_mode = ckpt.get("dynamics_coordinates", ckpt.get("config", {}).get("dynamics_coordinates", "count"))
+        coordinates = coordinates_from_checkpoint(ckpt, device) if coordinate_mode == "gene_scaled" else None
+        cfg.dynamics_coordinates = coordinate_mode
+        if args.checkpoint:
+            stem = checkpoint_path.stem.removeprefix("model_")
         model.load_state_dict(ckpt["model"])
     eval_gene_sets = _load_eval_gene_sets(gene_ids, args.eval_gene_subset, cfg)
     metrics = evaluate_intervals(
@@ -119,6 +126,7 @@ def main() -> None:
         n_batches=args.batches,
         eval_gene_sets=eval_gene_sets,
         batch_cache=cfg.resolve_path(args.eval_cache) if args.eval_cache else None,
+        coordinates=coordinates,
     )
     out = cfg.out_dir / f"eval_metrics_{stem}.csv"
     metrics.to_csv(out, index=False)

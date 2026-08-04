@@ -48,6 +48,8 @@ ENDPOINT_DENOISING="${ENDPOINT_DENOISING:-}"
 DENOISING_NEIGHBORS="${DENOISING_NEIGHBORS:-}"
 DENOISING_METACELLS="${DENOISING_METACELLS:-}"
 UCE_EXPRESSION_PREPROCESSING="${UCE_EXPRESSION_PREPROCESSING:-}"
+DYNAMICS_COORDINATES="${DYNAMICS_COORDINATES:-count}"
+GENE_SCALE_CELLS_PER_DAY="${GENE_SCALE_CELLS_PER_DAY:-512}"
 PCA_ARTIFACT="${PCA_ARTIFACT:-}"
 MAX_INTERVAL_SKIP="${MAX_INTERVAL_SKIP:-}"
 INCLUDE_HELDOUT_BRIDGE_INTERVALS="${INCLUDE_HELDOUT_BRIDGE_INTERVALS:-0}"
@@ -75,7 +77,9 @@ args=(--config "$CONFIG" --variant "$VARIANT" --steps-per-epoch "$STEPS_PER_EPOC
   --early-stopping-min-delta "$EARLY_STOPPING_MIN_DELTA" \
   --validation-ema-alpha "$VALIDATION_EMA_ALPHA" \
   --rollout-every-validations "$ROLLOUT_EVERY_VALIDATIONS" \
-  --validation-rollout-steps "$VALIDATION_ROLLOUT_STEPS")
+  --validation-rollout-steps "$VALIDATION_ROLLOUT_STEPS" \
+  --dynamics-coordinates "$DYNAMICS_COORDINATES" \
+  --gene-scale-cells-per-day "$GENE_SCALE_CELLS_PER_DAY")
 if [[ -n "$TIMEPOINT_SPLIT" ]]; then args+=(--timepoint-split "$TIMEPOINT_SPLIT"); fi
 if [[ -n "$EPOCHS" ]]; then args+=(--epochs "$EPOCHS"); fi
 if [[ -n "$OT_METHOD" ]]; then args+=(--ot-method "$OT_METHOD"); fi
