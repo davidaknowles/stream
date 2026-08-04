@@ -36,6 +36,26 @@ class PCADenoiser:
             coordinates = coordinates / np.sqrt(np.maximum(self.explained_variance, 1e-8))
         return np.asarray(coordinates, dtype=np.float32)
 
+    def transform_tensor(self, counts, whiten: bool = True):
+        """Differentiably map a torch count tensor into train-only PCA coordinates."""
+
+        import torch
+
+        library_size = counts.sum(dim=1)
+        scale = torch.where(
+            library_size > 0,
+            counts.new_tensor(self.target_sum) / library_size,
+            torch.zeros_like(library_size),
+        )
+        normalized = torch.log1p(torch.clamp(counts, min=0.0) * scale[:, None])
+        components = torch.as_tensor(self.components, device=counts.device, dtype=counts.dtype)
+        mean = torch.as_tensor(self.mean, device=counts.device, dtype=counts.dtype)
+        coordinates = (normalized - mean) @ components.T
+        if whiten:
+            variance = torch.as_tensor(self.explained_variance, device=counts.device, dtype=counts.dtype)
+            coordinates = coordinates / variance.clamp_min(1e-8).sqrt()
+        return coordinates
+
     def reconstruct_counts(self, counts: np.ndarray) -> np.ndarray:
         normalized, library_size = log_normalize_counts(counts, self.target_sum)
         coordinates = (normalized - self.mean) @ self.components.T

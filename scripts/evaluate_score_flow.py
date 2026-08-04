@@ -35,8 +35,12 @@ def main() -> None:
 
     checkpoint_path = StreamConfig().resolve_path(args.checkpoint)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    if checkpoint.get("model_contract") != "online_uce_coupled_score_flow_v2":
-        raise ValueError("Expected online_uce_coupled_score_flow_v2 checkpoint")
+    supported_contracts = {
+        "online_uce_coupled_score_flow_v2",
+        "online_uce_population_finetuned_score_flow_v3",
+    }
+    if checkpoint.get("model_contract") not in supported_contracts:
+        raise ValueError(f"Expected one of {sorted(supported_contracts)}")
     saved = checkpoint["config"]
     cfg = StreamConfig.from_yaml(args.config)
     apply_config_overrides(cfg, out_dir=args.out_dir, n_hvg=len(checkpoint["gene_ids"]), cell_state="uce", uce_mode="online")

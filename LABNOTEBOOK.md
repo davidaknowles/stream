@@ -1,5 +1,15 @@
 # Lab Notebook
 
+## 2026-08-04
+
+- Added population-level fine-tuning of coupled score-flow checkpoints through explicit expression-space Euler--Maruyama rollouts. Source and target cells are sampled independently within each observed interval, eliminating OT cell-pair couplings from this stage.
+- Each update averages a coupled ODE endpoint loss and a positive-diffusion SDE endpoint loss. The loss combines debiased Sinkhorn divergence in whitened train-only PCA coordinates, robustly scaled gene-mean error, PCA covariance error, and a pretrained-parameter anchor.
+- Fine-tuning freezes STREAM's regulatory trunk and autonomous velocity control, and updates only the path-coordinate modulation, conditional velocity, and shared noise heads. Raw current expression is re-encoded by frozen UCE at each step; the discrete encoder is stop-gradient and no KNN/metacell smoothing is applied during rollout.
+- Added fixed, disjoint validation populations and Brownian seeds, EMA checkpoint selection including the pretrained update-zero baseline, a reusable population rollout/loss module, evaluation support for the new checkpoint contract, and focused gradient and parameter-freezing tests. All 47 unit tests pass.
+- GPU smoke job `19510887` completed a full baseline-validation, ODE/SDE rollout, backward update, post-update validation, and v3 checkpoint reload. The rollout gradient norm was 0.375 and all losses were finite. The one-step validation change was below the 0.2% selection threshold, so the pretrained update-zero checkpoint was correctly retained.
+- Held-out evaluation smoke job `19512108` loaded the v3 checkpoint and completed all autonomous, coupled, learned-score, and zero-score controls across the three middle-block forecast horizons. This was a two-cell, one-step interface test rather than an efficacy estimate.
+- Submitted population fine-tuning and dependent held-out middle-block evaluation for all six FiLM/cross-attention by raw/KNN/metacell pretrained models. Train/evaluation jobs are `19512056`/`19512057`, `19512058`/`19512059`, `19512060`/`19512061`, `19512062`/`19512063`, `19512064`/`19512065`, and `19512066`/`19512067`. The two jobs whose parent score-flow fits are still active also depend on those parent jobs.
+
 ## 2026-08-03
 
 - Replaced the weak independent score/flow heads with an analytically coupled stochastic-interpolant parameterization. One shared $\tau$-modulated promoter representation predicts conditional endpoint velocity and standardized bridge noise. The coupled flow is the conditional velocity plus $\gamma'(\tau)\Sigma\widehat\epsilon/\Delta t$, and the score is $-\Sigma^{-1}\widehat\epsilon/\gamma(\tau)$, so both use the same noise estimate. A third readout from the unmodulated promoter features provides a strictly autonomous velocity control; neither path receives absolute developmental time.

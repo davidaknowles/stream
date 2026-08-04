@@ -328,6 +328,44 @@ $B=128$--$256$, $M=4$ particles, $K=4$ rollout steps, and rank $r=8$ is an
 appropriate initial configuration. Larger $M$, $K$, and $r$ should be tested
 only after establishing a positive endpoint signal.
 
+\subsection{Implemented score-flow fine-tuning}
+
+The first explicit-rollout implementation starts from the coupled
+score-and-flow checkpoint rather than introducing a new diffusion head. For
+each observed training interval it samples source cells and target cells
+independently. No balanced, partial, or unbalanced OT plan is used to construct
+cell pairs. Each update jointly evaluates the coupled probability-flow ODE
+($\kappa=0$) and one score-corrected SDE with
+$\kappa\in\{10^{-3},10^{-2}\}$:
+\begin{equation}
+  X_{k+1}=\Pi_+\!\left[X_k+\Delta t
+  \left(v_\theta+\kappa\,\Sigma s_\theta\right)
+  +\sqrt{2\kappa\Delta t}\,\Sigma\epsilon_k\right].
+  \label{eq:implemented-rollout}
+\end{equation}
+Here $v_\theta$ and $s_\theta$ retain the shared noise parameterization from
+Equation~\ref{eq:score-flow-sde}, and $\Sigma$ is the fixed robust gene scale
+estimated during simulation-free fitting.
+
+The regulatory trunk, autonomous velocity head, and frozen \uce{} encoder are
+held fixed. Fine-tuning updates only the interpolation-coordinate modulation,
+conditional velocity head, and shared noise head, with a quadratic anchor to
+their pretrained values. At every integration step, raw current expression is
+retokenized and encoded by \uce{}; neither KNN nor metacell smoothing is
+applied during rollout. The gradient through this discrete state map is
+truncated, while gradients propagate through the additive expression update
+and directly into the fields evaluated at each step.
+
+The endpoint objective averages the ODE and SDE losses. Each contains the
+debiased Sinkhorn divergence in whitened train-only PCA coordinates, a
+gene-mean penalty normalized by robust gene scale, and a PCA-covariance
+penalty. The optimized Sinkhorn plan is detached when computing gradients,
+which applies the envelope gradient without retaining all matrix-scaling
+iterations. Validation uses disjoint cells, fixed source and target batches,
+fixed Brownian seeds, and interval-balanced stages. The pretrained checkpoint
+is update zero, and an exponential moving average of validation endpoint loss
+selects the fine-tuned checkpoint.
+
 \subsection{Regularization}
 
 Without constraints, diffusion can absorb model error or produce an overly

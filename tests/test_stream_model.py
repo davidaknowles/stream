@@ -404,6 +404,24 @@ def test_pca_tensor_reconstruction_matches_numpy_for_uce_input():
     assert uce_input_expression(DenoisedConfig(), counts, pca) is counts
 
 
+def test_pca_tensor_transform_matches_numpy_and_is_differentiable():
+    torch = pytest.importorskip("torch")
+    from stream_model.denoise import PCADenoiser
+
+    pca = PCADenoiser(
+        components=np.asarray([[1.0, 0.0, 0.0], [0.0, 0.5, 0.5]], dtype=np.float32),
+        mean=np.asarray([0.5, 0.5, 0.5], dtype=np.float32),
+        explained_variance=np.asarray([2.0, 0.5], dtype=np.float32),
+    )
+    counts = torch.tensor([[10.0, 2.0, 0.0], [0.0, 4.0, 8.0]], requires_grad=True)
+    coordinates = pca.transform_tensor(counts)
+    expected = torch.as_tensor(pca.transform_counts(counts.detach().numpy()))
+    assert torch.allclose(coordinates, expected, rtol=1e-5, atol=1e-5)
+    coordinates.square().mean().backward()
+    assert counts.grad is not None
+    assert torch.isfinite(counts.grad).all()
+
+
 def test_knn_smoothing_uses_local_profiles_and_preserves_library_size():
     from stream_model.denoise import knn_smooth_selected_counts
 
@@ -826,6 +844,66 @@ def test_zero_score_diffusion_removes_only_score_drift():
     learned = score_flow_rollout(**kwargs, score_control="learned")
     zero = score_flow_rollout(**kwargs, score_control="zero")
     assert not torch.allclose(learned, zero)
+
+
+def test_population_rollout_matches_deterministic_control_and_backpropagates():
+    torch = pytest.importorskip("torch")
+    from stream_model.population_finetune import differentiable_score_flow_rollout
+    from stream_model.score_flow import score_flow_rollout
+
+    weight = torch.nn.Parameter(torch.tensor(0.25))
+
+    def prediction(x, tau, seed):
+        del tau, seed
+        velocity = torch.ones_like(x) * weight
+        noise = torch.zeros_like(x)
+        return torch.stack([velocity, velocity, noise], dim=-1)
+
+    kwargs = dict(
+        x0=torch.ones(2, 3),
+        t0=0.0,
+        t1=1.0,
+        predict_fn=prediction,
+        gene_scale=torch.ones(3),
+        steps=4,
+        seed=11,
+        diffusion=0.0,
+        noise_amplitude=0.2,
+    )
+    differentiable = differentiable_score_flow_rollout(**kwargs)
+    reference = score_flow_rollout(**kwargs, dynamics_mode="coupled")
+    assert torch.allclose(differentiable, reference)
+    differentiable.sum().backward()
+    assert weight.grad is not None and weight.grad > 0
+
+
+def test_population_sinkhorn_and_parameter_freezing():
+    torch = pytest.importorskip("torch")
+    from stream_model.models import ScoreFlowStreamModel
+    from stream_model.population_finetune import (
+        configure_population_finetuning,
+        differentiable_sinkhorn_divergence,
+    )
+
+    predicted = torch.tensor([[0.0], [1.0]], requires_grad=True)
+    observed = torch.tensor([[1.0], [2.0]])
+    loss = differentiable_sinkhorn_divergence(predicted, observed, epsilon=0.1, iterations=100)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert predicted.grad is not None and torch.isfinite(predicted.grad).all()
+
+    model = ScoreFlowStreamModel(
+        n_genes=3, cre_dim=4, d_model=8, n_heads=2, n_layers=1, state_dim=5, time_dim=4
+    )
+    trainable = configure_population_finetuning(model)
+    trainable_names = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable
+    assert all(
+        name.startswith(("time_mlp.", "conditional_velocity_head.", "noise_head."))
+        for name in trainable_names
+    )
+    assert not model.autonomous_velocity_head.weight.requires_grad
+    assert not any(parameter.requires_grad for parameter in model.stream.parameters())
 
 
 def test_projected_euler_rollout_is_autonomous_and_nonnegative():
