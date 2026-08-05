@@ -160,25 +160,26 @@ def main() -> None:
             for replicate in range(replicates):
                 seed = cfg.seed + interval_index * 10_000 + replicate
                 if growth_control == "learned":
-                    result = differentiable_growth_rollout(
-                        coordinates.to_model(torch.as_tensor(source, device=device)),
-                        batch.t0,
-                        batch.t1,
-                        predict_growth_only if dynamics_mode == "none" else predict_growth,
-                        perturbation_scale,
-                        args.steps,
-                        seed,
-                        diffusion=diffusion,
-                        noise_amplitude=cfg.score_flow_noise_scale,
-                        particles=1,
-                        dynamics_mode=dynamics_mode,
-                        score_control=(
-                            "learned" if score_control == "not_used" else score_control
-                        ),
-                        max_growth_rate=float(
-                            growth_config.get("max_relative_growth_rate", 4.0)
-                        ),
-                    )
+                    with torch.no_grad():
+                        result = differentiable_growth_rollout(
+                            coordinates.to_model(torch.as_tensor(source, device=device)),
+                            batch.t0,
+                            batch.t1,
+                            predict_growth_only if dynamics_mode == "none" else predict_growth,
+                            perturbation_scale,
+                            args.steps,
+                            seed,
+                            diffusion=diffusion,
+                            noise_amplitude=cfg.score_flow_noise_scale,
+                            particles=1,
+                            dynamics_mode=dynamics_mode,
+                            score_control=(
+                                "learned" if score_control == "not_used" else score_control
+                            ),
+                            max_growth_rate=float(
+                                growth_config.get("max_relative_growth_rate", 4.0)
+                            ),
+                        )
                     predicted_y = result.state
                     predicted_weights = result.weights.detach().cpu().numpy()
                     growth_metrics = {

@@ -210,7 +210,9 @@ def differentiable_growth_rollout(
             x = x + dt * drift
         x = torch.clamp(x, min=0.0)
     weights = torch.softmax(log_weights, dim=0)
-    weight_kl = torch.sum(weights * (torch.log(weights.clamp_min(1e-30)) + math.log(len(weights))))
+    weight_kl = torch.sum(
+        weights * (torch.log(weights.clamp_min(1e-30)) + math.log(len(weights)))
+    ).clamp_min(0.0)
     growth_rate_mean_square = torch.stack(squared_rates).mean()
     return GrowthRolloutResult(
         state=x,
