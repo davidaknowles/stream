@@ -1082,6 +1082,36 @@ def test_weighted_mean_shift_uses_growth_weights():
     assert weighted["mean_shift_mae"] < uniform["mean_shift_mae"]
 
 
+def test_weighted_sinkhorn_dual_gradient_matches_finite_difference():
+    torch = pytest.importorskip("torch")
+    from stream_model.population_finetune import differentiable_sinkhorn_divergence
+
+    predicted = torch.tensor([[0.0], [0.4], [1.2]])
+    observed = torch.tensor([[0.2], [0.8], [1.0], [1.4]])
+    logits = torch.tensor([-0.3, 0.1, 0.4], requires_grad=True)
+
+    def objective(values):
+        return differentiable_sinkhorn_divergence(
+            predicted,
+            observed,
+            epsilon=0.1,
+            iterations=200,
+            x_weights=torch.softmax(values, dim=0),
+        )
+
+    loss = objective(logits)
+    loss.backward()
+    direction = torch.tensor([0.5, -0.2, -0.3])
+    step = 1e-3
+    finite_difference = (
+        objective(logits.detach() + step * direction)
+        - objective(logits.detach() - step * direction)
+    ) / (2.0 * step)
+    automatic = torch.sum(logits.grad * direction)
+    assert torch.isfinite(logits.grad).all()
+    assert automatic == pytest.approx(float(finite_difference), abs=2e-4)
+
+
 def test_projected_euler_rollout_is_autonomous_and_nonnegative():
     torch = pytest.importorskip("torch")
     from stream_model.rollout import projected_euler_rollout

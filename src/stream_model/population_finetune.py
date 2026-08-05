@@ -69,16 +69,20 @@ def _entropic_ot_with_detached_plan(
         if target_weights is None
         else target_weights.to(cost) / target_weights.sum()
     )
-    if source_weights.requires_grad or target_weights.requires_grad:
-        coupling = sinkhorn_coupling(
-            cost.detach(),
-            epsilon=epsilon,
-            iterations=iterations,
-            source_marginal=source_weights,
-            target_marginal=target_weights,
-        )
-    else:
-        with torch.no_grad():
+    with torch.no_grad():
+        if source_weights.requires_grad or target_weights.requires_grad:
+            log_a = torch.log(source_weights.detach())
+            log_b = torch.log(target_weights.detach())
+            log_k = -cost.detach() / float(epsilon)
+            u = torch.zeros_like(log_a)
+            v = torch.zeros_like(log_b)
+            for _ in range(iterations):
+                u = log_a - torch.logsumexp(log_k + v.unsqueeze(0), dim=1)
+                v = log_b - torch.logsumexp(log_k + u.unsqueeze(1), dim=0)
+            coupling = torch.exp(log_k + u.unsqueeze(1) + v.unsqueeze(0))
+            source_potential = float(epsilon) * (u - log_a)
+            target_potential = float(epsilon) * (v - log_b)
+        else:
             coupling = sinkhorn_coupling(
                 cost.detach(),
                 epsilon=epsilon,
@@ -86,9 +90,22 @@ def _entropic_ot_with_detached_plan(
                 source_marginal=source_weights,
                 target_marginal=target_weights,
             )
-    reference = source_weights[:, None] * target_weights[None, :]
-    kl = torch.sum(coupling * (torch.log(coupling.clamp_min(1e-30)) - torch.log(reference)))
-    return torch.sum(coupling * cost) + float(epsilon) * kl
+            source_potential = target_potential = None
+    reference = source_weights.detach()[:, None] * target_weights.detach()[None, :]
+    kl = torch.sum(
+        coupling
+        * (torch.log(coupling.clamp_min(1e-30)) - torch.log(reference))
+    )
+    objective = torch.sum(coupling * cost) + float(epsilon) * kl
+    if source_weights.requires_grad:
+        objective = objective + torch.sum(
+            (source_weights - source_weights.detach()) * source_potential
+        )
+    if target_weights.requires_grad:
+        objective = objective + torch.sum(
+            (target_weights - target_weights.detach()) * target_potential
+        )
+    return objective
 
 
 def differentiable_sinkhorn_divergence(

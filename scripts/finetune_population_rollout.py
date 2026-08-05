@@ -364,7 +364,9 @@ def main() -> None:
         if not torch.isfinite(loss):
             raise FloatingPointError(f"Non-finite population loss at update {update}")
         loss.backward()
-        gradient_norm = torch.nn.utils.clip_grad_norm_(trainable, 1.0)
+        gradient_norm = torch.nn.utils.clip_grad_norm_(
+            trainable, 1.0, error_if_nonfinite=True
+        )
         optimizer.step()
         metrics.append({
             "update": update,
