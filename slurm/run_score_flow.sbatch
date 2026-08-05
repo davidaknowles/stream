@@ -40,6 +40,10 @@ elif [[ "$MODE" == "population_finetune" ]]; then
     --max-updates "${MAX_UPDATES:-200}" --validation-every "${VALIDATION_EVERY:-20}" \
     --validation-intervals "${VALIDATION_INTERVALS:-4}" --patience "${PATIENCE:-5}" \
     --learning-rate "${LEARNING_RATE:-1e-5}" --gene-chunk-size "${GENE_CHUNK_SIZE:-256}" \
+    --growth-mode "${GROWTH_MODE:-none}" --growth-hidden-dim "${GROWTH_HIDDEN_DIM:-256}" \
+    --max-relative-growth-rate "${MAX_RELATIVE_GROWTH_RATE:-4.0}" \
+    --growth-rate-weight "${GROWTH_RATE_WEIGHT:-0.001}" \
+    --growth-weight-kl "${GROWTH_WEIGHT_KL:-0.001}" \
     --limit-intervals "${LIMIT_INTERVALS:-0}" --device cuda
 elif [[ "$MODE" == "evaluate" ]]; then
   "$STREAM_PYTHON" scripts/evaluate_score_flow.py \

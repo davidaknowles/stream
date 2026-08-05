@@ -463,16 +463,28 @@ negative control against low-rank diffusion.
 \section{Growth and changing population mass}
 
 An SDE transports probability mass but does not create or remove it. If
-proliferation and death are central, add a growth-rate head
-$\gamma_\psi(E(x))$ and particle weights
+proliferation and death are central, the implemented extension adds a
+growth-rate head $\gamma_\psi(E(x))$ and normalized particle weights
 \begin{equation}
-  w_{k+1}=w_k\exp\!\left(\gamma_\psi(X_k)\Delta t\right).
+  \widetilde w_{k+1,i}=w_{k,i}\exp\!\left(
+    [\gamma_\psi(E(X_{k,i}))-\bar\gamma_k]\Delta t\right),
+  \qquad
+  w_{k+1,i}=\frac{\widetilde w_{k+1,i}}
+  {\sum_j\widetilde w_{k+1,j}},
+  \label{eq:growth-weights}
 \end{equation}
-Training then uses weighted or unbalanced Sinkhorn divergence. This separates
-state motion, stochastic fate dispersion, and mass change. Growth should be
-introduced only after comparing deterministic and stochastic transport under
-fixed mass; otherwise diffusion and growth may compensate for each other and
-be difficult to identify.
+where $\bar\gamma_k=\sum_iw_{k,i}\gamma_\psi(E(X_{k,i}))$. The centered rate
+is identifiable from stage-normalized snapshot data; absolute embryo growth
+is not. A bounded rate, rate-squared penalty, and KL penalty from the uniform
+particle weights limit collapse onto a few cells.
+
+Training replaces the predicted marginal in the endpoint Sinkhorn divergence,
+gene mean, and PCA covariance with $w_K$. Gradients through weighted Sinkhorn
+matrix scaling reach the growth head. Three causal controls separate the
+mechanisms: fixed-mass velocity, growth-only reweighting with $X_k=X_0$, and
+joint velocity plus growth. Learned-score and zero-score SDE controls are
+retained for the joint model. This distinguishes state motion, stochastic
+dispersion, and changing relative lineage abundance.
 
 \section{Evaluation}
 

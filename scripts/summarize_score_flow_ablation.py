@@ -28,9 +28,14 @@ def main() -> None:
         "mean_shift_mae",
         "mean_gene_wasserstein1",
     ]
+    group_columns = [
+        "variant", "endpoint_denoising", "dynamics_mode", "score_control", "diffusion"
+    ]
+    if "growth_control" in frame:
+        group_columns.append("growth_control")
     summary = (
         frame.groupby(
-            ["variant", "endpoint_denoising", "dynamics_mode", "score_control", "diffusion"],
+            group_columns,
             as_index=False,
         )[metrics]
         .mean()

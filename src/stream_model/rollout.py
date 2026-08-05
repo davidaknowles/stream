@@ -42,15 +42,27 @@ def mean_shift_metrics(
     x1: np.ndarray,
     predicted_x1: np.ndarray,
     indices: np.ndarray | list[int] | None = None,
+    predicted_weights: np.ndarray | None = None,
 ) -> dict[str, float]:
     if indices is not None:
         x0 = x0[:, indices]
         x1 = x1[:, indices]
         predicted_x1 = predicted_x1[:, indices]
+    if predicted_weights is None:
+        predicted_mean = predicted_x1.mean(axis=0)
+        wasserstein_prediction = predicted_x1
+    else:
+        predicted_weights = np.asarray(predicted_weights, dtype=np.float64)
+        predicted_weights = predicted_weights / predicted_weights.sum()
+        predicted_mean = np.sum(predicted_weights[:, None] * predicted_x1, axis=0)
+        cumulative = np.cumsum(predicted_weights)
+        quantiles = (np.arange(len(x1), dtype=np.float64) + 0.5) / len(x1)
+        resampled_indices = np.searchsorted(cumulative, quantiles, side="left")
+        wasserstein_prediction = predicted_x1[np.minimum(resampled_indices, len(predicted_x1) - 1)]
     observed_shift = x1.mean(axis=0) - x0.mean(axis=0)
-    predicted_shift = predicted_x1.mean(axis=0) - x0.mean(axis=0)
+    predicted_shift = predicted_mean - x0.mean(axis=0)
     sorted_observed = np.sort(x1, axis=0)
-    sorted_predicted = np.sort(predicted_x1, axis=0)
+    sorted_predicted = np.sort(wasserstein_prediction, axis=0)
     return {
         "mean_shift_r2": r2_score(observed_shift, predicted_shift),
         "mean_shift_mae": float(np.mean(np.abs(observed_shift - predicted_shift))),
@@ -58,11 +70,32 @@ def mean_shift_metrics(
     }
 
 
-def entropic_ot_cost(x: torch.Tensor, y: torch.Tensor, epsilon: float, iterations: int = 200) -> torch.Tensor:
+def entropic_ot_cost(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    epsilon: float,
+    iterations: int = 200,
+    x_weights: torch.Tensor | None = None,
+    y_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
     cost = torch.cdist(x.double(), y.double()).square() / x.shape[1]
-    coupling = sinkhorn_coupling(cost, epsilon=epsilon, iterations=iterations).double()
-    a = coupling.new_full((x.shape[0],), 1.0 / x.shape[0])
-    b = coupling.new_full((y.shape[0],), 1.0 / y.shape[0])
+    a = (
+        cost.new_full((x.shape[0],), 1.0 / x.shape[0])
+        if x_weights is None
+        else x_weights.to(cost) / x_weights.sum()
+    )
+    b = (
+        cost.new_full((y.shape[0],), 1.0 / y.shape[0])
+        if y_weights is None
+        else y_weights.to(cost) / y_weights.sum()
+    )
+    coupling = sinkhorn_coupling(
+        cost,
+        epsilon=epsilon,
+        iterations=iterations,
+        source_marginal=a,
+        target_marginal=b,
+    ).double()
     reference = a[:, None] * b[None, :]
     kl = torch.sum(coupling * (torch.log(coupling.clamp_min(1e-300)) - torch.log(reference)))
     return torch.sum(coupling * cost) + epsilon * kl
@@ -73,10 +106,14 @@ def sinkhorn_divergence(
     y: np.ndarray,
     epsilon: float,
     iterations: int = 200,
+    x_weights: np.ndarray | None = None,
+    y_weights: np.ndarray | None = None,
 ) -> float:
     xt = torch.as_tensor(x, dtype=torch.float64)
     yt = torch.as_tensor(y, dtype=torch.float64)
-    xy = entropic_ot_cost(xt, yt, epsilon, iterations)
-    xx = entropic_ot_cost(xt, xt, epsilon, iterations)
-    yy = entropic_ot_cost(yt, yt, epsilon, iterations)
+    xw = None if x_weights is None else torch.as_tensor(x_weights, dtype=torch.float64)
+    yw = None if y_weights is None else torch.as_tensor(y_weights, dtype=torch.float64)
+    xy = entropic_ot_cost(xt, yt, epsilon, iterations, xw, yw)
+    xx = entropic_ot_cost(xt, xt, epsilon, iterations, xw, xw)
+    yy = entropic_ot_cost(yt, yt, epsilon, iterations, yw, yw)
     return float(torch.clamp(xy - 0.5 * xx - 0.5 * yy, min=0.0))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from collections.abc import Callable, Sequence
 
 import torch
@@ -18,15 +19,19 @@ TRAINABLE_SCORE_FLOW_PREFIXES = (
 )
 
 
-def configure_population_finetuning(model) -> list[torch.nn.Parameter]:
+def configure_population_finetuning(
+    model, include_dynamics: bool = True
+) -> list[torch.nn.Parameter]:
     """Freeze the representation and autonomous control, returning rollout parameters."""
 
     trainable = []
     for name, parameter in model.named_parameters():
-        parameter.requires_grad_(name.startswith(TRAINABLE_SCORE_FLOW_PREFIXES))
+        parameter.requires_grad_(
+            include_dynamics and name.startswith(TRAINABLE_SCORE_FLOW_PREFIXES)
+        )
         if parameter.requires_grad:
             trainable.append(parameter)
-    if not trainable:
+    if include_dynamics and not trainable:
         raise ValueError("No score-flow parameters were selected for population fine-tuning")
     return trainable
 
@@ -50,11 +55,38 @@ def _entropic_ot_with_detached_plan(
     y: torch.Tensor,
     epsilon: float,
     iterations: int,
+    source_weights: torch.Tensor | None = None,
+    target_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     cost = torch.cdist(x.float(), y.float()).square() / x.shape[1]
-    with torch.no_grad():
-        coupling = sinkhorn_coupling(cost.detach(), epsilon=epsilon, iterations=iterations)
-    reference = cost.new_tensor(1.0 / (x.shape[0] * y.shape[0]))
+    source_weights = (
+        cost.new_full((len(x),), 1.0 / len(x))
+        if source_weights is None
+        else source_weights.to(cost) / source_weights.sum()
+    )
+    target_weights = (
+        cost.new_full((len(y),), 1.0 / len(y))
+        if target_weights is None
+        else target_weights.to(cost) / target_weights.sum()
+    )
+    if source_weights.requires_grad or target_weights.requires_grad:
+        coupling = sinkhorn_coupling(
+            cost.detach(),
+            epsilon=epsilon,
+            iterations=iterations,
+            source_marginal=source_weights,
+            target_marginal=target_weights,
+        )
+    else:
+        with torch.no_grad():
+            coupling = sinkhorn_coupling(
+                cost.detach(),
+                epsilon=epsilon,
+                iterations=iterations,
+                source_marginal=source_weights,
+                target_marginal=target_weights,
+            )
+    reference = source_weights[:, None] * target_weights[None, :]
     kl = torch.sum(coupling * (torch.log(coupling.clamp_min(1e-30)) - torch.log(reference)))
     return torch.sum(coupling * cost) + float(epsilon) * kl
 
@@ -64,15 +96,110 @@ def differentiable_sinkhorn_divergence(
     y: torch.Tensor,
     epsilon: float = 0.05,
     iterations: int = 80,
+    x_weights: torch.Tensor | None = None,
+    y_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Debiased entropic OT with envelope gradients through endpoint coordinates."""
 
     if x.ndim != 2 or y.ndim != 2 or x.shape[1] != y.shape[1]:
         raise ValueError("x and y must be matrices with the same feature dimension")
-    xy = _entropic_ot_with_detached_plan(x, y, epsilon, iterations)
-    xx = _entropic_ot_with_detached_plan(x, x, epsilon, iterations)
-    yy = _entropic_ot_with_detached_plan(y, y, epsilon, iterations)
+    xy = _entropic_ot_with_detached_plan(
+        x, y, epsilon, iterations, x_weights, y_weights
+    )
+    xx = _entropic_ot_with_detached_plan(
+        x, x, epsilon, iterations, x_weights, x_weights
+    )
+    yy = _entropic_ot_with_detached_plan(
+        y, y, epsilon, iterations, y_weights, y_weights
+    )
     return xy - 0.5 * xx - 0.5 * yy
+
+
+@dataclass(frozen=True)
+class GrowthRolloutResult:
+    state: torch.Tensor
+    weights: torch.Tensor
+    growth_rate_rms: torch.Tensor
+    weight_kl: torch.Tensor
+    effective_sample_size: torch.Tensor
+
+
+def differentiable_growth_rollout(
+    x0: torch.Tensor,
+    t0: float,
+    t1: float,
+    predict_growth_fn: Callable[
+        [torch.Tensor, torch.Tensor, int], tuple[torch.Tensor | None, torch.Tensor]
+    ],
+    gene_scale: torch.Tensor,
+    steps: int,
+    seed: int,
+    diffusion: float,
+    noise_amplitude: float,
+    particles: int = 1,
+    dynamics_mode: str = "coupled",
+    score_control: str = "learned",
+    max_growth_rate: float = 4.0,
+    brownian_noise: Sequence[torch.Tensor] | None = None,
+) -> GrowthRolloutResult:
+    """Jointly integrate expression states and normalized relative-growth weights."""
+
+    if dynamics_mode not in {"none", "coupled"}:
+        raise ValueError("dynamics_mode must be none or coupled")
+    if score_control not in {"learned", "zero"}:
+        raise ValueError("score_control must be learned or zero")
+    if steps <= 0 or particles <= 0 or t1 <= t0 or diffusion < 0:
+        raise ValueError("Require positive steps/particles/horizon and nonnegative diffusion")
+    if max_growth_rate <= 0:
+        raise ValueError("max_growth_rate must be positive")
+    x = x0.repeat_interleave(particles, dim=0)
+    log_weights = x.new_full((len(x),), -math.log(len(x)))
+    dt = float(t1 - t0) / steps
+    scale = gene_scale.to(x).reshape(1, -1)
+    generator = torch.Generator(device=x.device).manual_seed(seed)
+    squared_rates = []
+    if brownian_noise is not None and len(brownian_noise) != steps:
+        raise ValueError("brownian_noise must contain one tensor per integration step")
+    for step in range(steps):
+        tau = x.new_full((len(x), 1), (step + 0.5) / steps)
+        prediction, growth_logits = predict_growth_fn(x, tau, seed + step)
+        weights = torch.softmax(log_weights, dim=0)
+        rates = float(max_growth_rate) * torch.tanh(growth_logits.reshape(-1))
+        rates = rates - torch.sum(weights * rates)
+        squared_rates.append(torch.sum(weights * rates.square()))
+        log_weights = log_weights + dt * rates
+        log_weights = log_weights - torch.logsumexp(log_weights, dim=0)
+        if dynamics_mode == "none":
+            continue
+        if prediction is None:
+            raise ValueError("A score-flow prediction is required when dynamics are enabled")
+        _autonomous, flow, score = coupled_score_flow_fields(
+            prediction, tau, gene_scale, t1 - t0, noise_amplitude
+        )
+        if score_control == "zero":
+            score = torch.zeros_like(score)
+        drift = flow + float(diffusion) * scale * score
+        if diffusion > 0:
+            noise = (
+                brownian_noise[step].to(x)
+                if brownian_noise is not None
+                else torch.randn(
+                    x.shape, device=x.device, dtype=x.dtype, generator=generator
+                )
+            )
+            x = x + dt * drift + math.sqrt(2.0 * diffusion * dt) * scale * noise
+        else:
+            x = x + dt * drift
+        x = torch.clamp(x, min=0.0)
+    weights = torch.softmax(log_weights, dim=0)
+    weight_kl = torch.sum(weights * (torch.log(weights.clamp_min(1e-30)) + math.log(len(weights))))
+    return GrowthRolloutResult(
+        state=x,
+        weights=weights,
+        growth_rate_rms=torch.stack(squared_rates).mean().sqrt(),
+        weight_kl=weight_kl,
+        effective_sample_size=weights.square().sum().reciprocal(),
+    )
 
 
 def differentiable_score_flow_rollout(
@@ -134,19 +261,41 @@ def population_endpoint_loss(
     sinkhorn_iterations: int = 80,
     mean_weight: float = 0.1,
     covariance_weight: float = 0.01,
+    predicted_weights: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Compare independently sampled endpoint populations without cell pairing."""
 
     predicted_pca = pca.transform_tensor(predicted)
     observed_pca = pca.transform_tensor(observed)
     sinkhorn = differentiable_sinkhorn_divergence(
-        predicted_pca, observed_pca, epsilon=sinkhorn_epsilon, iterations=sinkhorn_iterations
+        predicted_pca,
+        observed_pca,
+        epsilon=sinkhorn_epsilon,
+        iterations=sinkhorn_iterations,
+        x_weights=predicted_weights,
     )
     scale = gene_scale.to(predicted).reshape(-1).clamp_min(1e-3)
-    mean = ((predicted.mean(0) - observed.mean(0)) / scale).square().mean()
-    predicted_centered = predicted_pca - predicted_pca.mean(0)
+    if predicted_weights is None:
+        predicted_mean = predicted.mean(0)
+        predicted_pca_mean = predicted_pca.mean(0)
+    else:
+        normalized_weights = predicted_weights / predicted_weights.sum()
+        predicted_mean = torch.sum(normalized_weights[:, None] * predicted, dim=0)
+        predicted_pca_mean = torch.sum(
+            normalized_weights[:, None] * predicted_pca, dim=0
+        )
+    mean = ((predicted_mean - observed.mean(0)) / scale).square().mean()
+    predicted_centered = predicted_pca - predicted_pca_mean
     observed_centered = observed_pca - observed_pca.mean(0)
-    predicted_cov = predicted_centered.T @ predicted_centered / max(len(predicted_pca) - 1, 1)
+    if predicted_weights is None:
+        predicted_cov = (
+            predicted_centered.T @ predicted_centered / max(len(predicted_pca) - 1, 1)
+        )
+    else:
+        predicted_cov = (
+            predicted_centered.T
+            @ (normalized_weights[:, None] * predicted_centered)
+        ) / (1.0 - normalized_weights.square().sum()).clamp_min(1e-6)
     observed_cov = observed_centered.T @ observed_centered / max(len(observed_pca) - 1, 1)
     covariance = (predicted_cov - observed_cov).square().mean()
     total = sinkhorn + float(mean_weight) * mean + float(covariance_weight) * covariance

@@ -216,6 +216,24 @@ class ScoreFlowStreamModel(nn.Module):
         noise = self.noise_head(conditional_features).squeeze(-1)
         return torch.stack([autonomous_velocity, conditional_velocity, noise], dim=-1)
 
+
+class GrowthRateHead(nn.Module):
+    """Predict a relative population growth rate from a frozen cell-state embedding."""
+
+    def __init__(self, state_dim: int, hidden_dim: int = 256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.LayerNorm(state_dim),
+            nn.Linear(state_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        return self.net(state).squeeze(-1)
+
 def apply_rope(x: torch.Tensor, positions: torch.Tensor, base: float = 10_000.0) -> torch.Tensor:
     """Apply RoPE to token features using signed genomic positions."""
 

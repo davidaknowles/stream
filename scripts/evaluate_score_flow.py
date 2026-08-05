@@ -14,7 +14,8 @@ from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler, heldout_block_forecast_intervals
 from stream_model.denoise import PCADenoiser
-from stream_model.models import ScoreFlowStreamModel
+from stream_model.models import GrowthRateHead, ScoreFlowStreamModel
+from stream_model.population_finetune import differentiable_growth_rollout
 from stream_model.rollout import mean_shift_metrics, sinkhorn_divergence
 from stream_model.score_flow import predict_score_flow_chunked, score_flow_rollout
 from stream_model.train import load_cre_npz
@@ -41,6 +42,8 @@ def main() -> None:
         "online_uce_population_finetuned_score_flow_v3",
         "online_uce_gene_scaled_score_flow_v3",
         "online_uce_gene_scaled_population_score_flow_v4",
+        "online_uce_growth_population_score_flow_v4",
+        "online_uce_gene_scaled_growth_population_score_flow_v5",
     }
     if checkpoint.get("model_contract") not in supported_contracts:
         raise ValueError(f"Expected one of {sorted(supported_contracts)}")
@@ -88,6 +91,15 @@ def main() -> None:
     ).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
+    growth_config = checkpoint.get("population_finetuning", {})
+    growth_head = None
+    if "growth_head" in checkpoint:
+        growth_head = GrowthRateHead(
+            cfg.uce_embedding_dim,
+            hidden_dim=int(growth_config.get("growth_hidden_dim", 256)),
+        ).to(device)
+        growth_head.load_state_dict(checkpoint["growth_head"])
+        growth_head.eval()
     encoder = build_online_uce_encoder(cfg, selected, device)
     pca = PCADenoiser.load(cfg.resolve_path(args.pca_artifact))
     gene_scale = checkpoint["gene_scale"].to(device)
@@ -109,38 +121,108 @@ def main() -> None:
             state = encoder.encode(coordinates.to_expression(current_y), seed)
             return predict_score_flow_chunked(model, state, tau, cre_inputs, cfg.gene_chunk_size)
 
-        controls = [("autonomous", "not_used", 0.0), ("coupled", "not_used", 0.0)]
+        def predict_growth(current_y, tau, seed):
+            state = encoder.encode(coordinates.to_expression(current_y), seed)
+            prediction = predict_score_flow_chunked(
+                model, state, tau, cre_inputs, cfg.gene_chunk_size
+            )
+            return prediction, growth_head(state)
+
+        controls = [
+            ("autonomous", "not_used", 0.0, "none"),
+            ("coupled", "not_used", 0.0, "none"),
+        ]
         controls.extend(
-            ("coupled", score_control, diffusion)
+            ("coupled", score_control, diffusion, "none")
             for diffusion in diffusions
             if diffusion > 0
             for score_control in ("learned", "zero")
         )
-        for dynamics_mode, score_control, diffusion in controls:
+        if growth_head is not None:
+            controls.extend([
+                ("none", "not_used", 0.0, "learned"),
+                ("coupled", "not_used", 0.0, "learned"),
+            ])
+            controls.extend(
+                ("coupled", score_control, diffusion, "learned")
+                for diffusion in diffusions
+                if diffusion > 0
+                for score_control in ("learned", "zero")
+            )
+        for dynamics_mode, score_control, diffusion, growth_control in controls:
             replicates = 1 if diffusion == 0 else args.stochastic_replicates
             replicate_rows = []
             for replicate in range(replicates):
                 seed = cfg.seed + interval_index * 10_000 + replicate
-                predicted_y = score_flow_rollout(
-                    coordinates.to_model(torch.as_tensor(source, device=device)),
-                    batch.t0,
-                    batch.t1,
-                    predict,
-                    perturbation_scale,
-                    args.steps,
-                    seed,
-                    diffusion=diffusion,
-                    noise_amplitude=cfg.score_flow_noise_scale,
-                    dynamics_mode=dynamics_mode,
-                    score_control="learned" if score_control == "not_used" else score_control,
+                if growth_control == "learned":
+                    result = differentiable_growth_rollout(
+                        coordinates.to_model(torch.as_tensor(source, device=device)),
+                        batch.t0,
+                        batch.t1,
+                        predict_growth,
+                        perturbation_scale,
+                        args.steps,
+                        seed,
+                        diffusion=diffusion,
+                        noise_amplitude=cfg.score_flow_noise_scale,
+                        particles=1,
+                        dynamics_mode=dynamics_mode,
+                        score_control=(
+                            "learned" if score_control == "not_used" else score_control
+                        ),
+                        max_growth_rate=float(
+                            growth_config.get("max_relative_growth_rate", 4.0)
+                        ),
+                    )
+                    predicted_y = result.state
+                    predicted_weights = result.weights.detach().cpu().numpy()
+                    growth_metrics = {
+                        "growth_effective_sample_size": float(
+                            result.effective_sample_size.detach().cpu()
+                        ),
+                        "growth_weight_kl": float(result.weight_kl.detach().cpu()),
+                        "growth_rate_rms": float(result.growth_rate_rms.detach().cpu()),
+                    }
+                else:
+                    predicted_y = score_flow_rollout(
+                        coordinates.to_model(torch.as_tensor(source, device=device)),
+                        batch.t0,
+                        batch.t1,
+                        predict,
+                        perturbation_scale,
+                        args.steps,
+                        seed,
+                        diffusion=diffusion,
+                        noise_amplitude=cfg.score_flow_noise_scale,
+                        dynamics_mode=dynamics_mode,
+                        score_control=(
+                            "learned" if score_control == "not_used" else score_control
+                        ),
+                    )
+                    predicted_weights = None
+                    growth_metrics = {
+                        "growth_effective_sample_size": float(len(source)),
+                        "growth_weight_kl": 0.0,
+                        "growth_rate_rms": 0.0,
+                    }
+                predicted = coordinates.to_expression(predicted_y).detach().cpu().numpy()
+                endpoint = sinkhorn_divergence(
+                    pca.transform_counts(predicted),
+                    observed_pca,
+                    epsilon=0.05,
+                    x_weights=predicted_weights,
                 )
-                predicted = coordinates.to_expression(predicted_y).cpu().numpy()
-                endpoint = sinkhorn_divergence(pca.transform_counts(predicted), observed_pca, epsilon=0.05)
                 replicate_rows.append(
                     {
-                        **mean_shift_metrics(source, observed, predicted),
+                        **mean_shift_metrics(
+                            source,
+                            observed,
+                            predicted,
+                            predicted_weights=predicted_weights,
+                        ),
                         "endpoint_sinkhorn": endpoint,
                         "sinkhorn_skill": 1.0 - endpoint / persistence if persistence > 0 else np.nan,
+                        **growth_metrics,
                     }
                 )
             row = {
@@ -148,8 +230,9 @@ def main() -> None:
                 "day1": day1,
                 "variant": cfg.model_variant,
                 "endpoint_denoising": saved["endpoint_denoising"],
-                "dynamics_mode": dynamics_mode,
+                "dynamics_mode": "growth_only" if dynamics_mode == "none" else dynamics_mode,
                 "score_control": score_control,
+                "growth_control": growth_control,
                 "diffusion": diffusion,
                 "integration_steps": args.steps,
                 "n_replicates": replicates,

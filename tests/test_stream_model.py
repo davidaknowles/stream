@@ -1006,6 +1006,82 @@ def test_population_sinkhorn_and_parameter_freezing():
     assert not any(parameter.requires_grad for parameter in model.stream.parameters())
 
 
+def test_growth_head_starts_at_zero_relative_growth():
+    torch = pytest.importorskip("torch")
+    from stream_model.models import GrowthRateHead
+
+    head = GrowthRateHead(state_dim=5, hidden_dim=8)
+    assert torch.equal(head(torch.randn(4, 5)), torch.zeros(4))
+
+
+def test_growth_rollout_preserves_states_and_uniform_weights_at_initialization():
+    torch = pytest.importorskip("torch")
+    from stream_model.population_finetune import differentiable_growth_rollout
+
+    x0 = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+    def predict_growth(x, tau, seed):
+        del tau, seed
+        return None, torch.zeros(len(x))
+
+    result = differentiable_growth_rollout(
+        x0, 0.0, 1.0, predict_growth, torch.ones(2), 4, 5, 0.0, 0.2,
+        particles=2, dynamics_mode="none",
+    )
+
+    assert torch.equal(result.state, x0.repeat_interleave(2, dim=0))
+    assert torch.allclose(result.weights, torch.full((4,), 0.25))
+    assert result.growth_rate_rms == pytest.approx(0.0)
+    assert result.weight_kl == pytest.approx(0.0)
+    assert result.effective_sample_size == pytest.approx(4.0)
+
+
+def test_growth_rollout_learns_relative_weights_and_weighted_sinkhorn_gradients():
+    torch = pytest.importorskip("torch")
+    from stream_model.population_finetune import (
+        differentiable_growth_rollout,
+        differentiable_sinkhorn_divergence,
+    )
+
+    coefficient = torch.nn.Parameter(torch.tensor(0.5))
+    x0 = torch.tensor([[0.0], [1.0]])
+
+    def predict_growth(x, tau, seed):
+        del tau, seed
+        return None, coefficient * x[:, 0]
+
+    result = differentiable_growth_rollout(
+        x0, 0.0, 1.0, predict_growth, torch.ones(1), 2, 7, 0.0, 0.2,
+        dynamics_mode="none", max_growth_rate=2.0,
+    )
+    assert result.weights[1] > result.weights[0]
+    observed = torch.tensor([[0.8], [1.0]])
+    loss = differentiable_sinkhorn_divergence(
+        result.state,
+        observed,
+        epsilon=0.1,
+        iterations=50,
+        x_weights=result.weights,
+    )
+    loss.backward()
+    assert coefficient.grad is not None
+    assert torch.isfinite(coefficient.grad)
+    assert coefficient.grad.abs() > 0
+
+
+def test_weighted_mean_shift_uses_growth_weights():
+    from stream_model.rollout import mean_shift_metrics
+
+    source = np.asarray([[0.0], [1.0]], dtype=np.float32)
+    target = np.asarray([[1.0], [1.0]], dtype=np.float32)
+    predicted = np.asarray([[0.0], [1.0]], dtype=np.float32)
+    uniform = mean_shift_metrics(source, target, predicted)
+    weighted = mean_shift_metrics(
+        source, target, predicted, predicted_weights=np.asarray([0.01, 0.99])
+    )
+    assert weighted["mean_shift_mae"] < uniform["mean_shift_mae"]
+
+
 def test_projected_euler_rollout_is_autonomous_and_nonnegative():
     torch = pytest.importorskip("torch")
     from stream_model.rollout import projected_euler_rollout

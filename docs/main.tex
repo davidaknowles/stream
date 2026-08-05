@@ -393,6 +393,24 @@ expression-only CFM baseline uses the same selected genes, same OT sampler,
 same interpolation path, and same loss, but replaces sequence-conditioned gene
 modules with an MLP from cell state to expression velocity.
 
+\subsection{Relative population growth}
+
+To separate state transport from changing lineage abundance, an optional
+growth head maps the current frozen \uce{} embedding to one scalar rate per
+cell, $\gamma_\psi(E(x))$. During unpaired population rollout, cell states
+follow the fitted ODE or SDE while normalized particle weights satisfy
+\begin{equation}
+  w_{k+1,i}\propto w_{k,i}\exp\!\left(
+  [\gamma_\psi(E(x_{k,i}))-\sum_jw_{k,j}\gamma_\psi(E(x_{k,j}))]\Delta t
+  \right).
+\end{equation}
+Centering and normalization identify only relative growth, appropriate because
+stage-specific atlas sampling does not measure absolute embryo cell number.
+The endpoint Sinkhorn, gene-mean, and PCA-covariance terms use the predicted
+weights. Rate and weight-concentration penalties prevent particle collapse.
+Evaluation reports fixed-mass velocity, growth-only reweighting, and joint
+velocity-plus-growth controls.
+
 \subsection{Held-out timepoint evaluation}
 
 Mouse models held out E9.5 and E10.5. Zebrafish models held out 36 and 72 hpf.

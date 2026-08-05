@@ -14,9 +14,10 @@ from stream_model.config import StreamConfig, apply_config_overrides
 from stream_model.coordinates import coordinates_from_checkpoint
 from stream_model.data import H5adIntervalSampler, intervals_with_skips
 from stream_model.denoise import PCADenoiser
-from stream_model.models import ScoreFlowStreamModel
+from stream_model.models import GrowthRateHead, ScoreFlowStreamModel
 from stream_model.population_finetune import (
     configure_population_finetuning,
+    differentiable_growth_rollout,
     differentiable_score_flow_rollout,
     parameter_anchor_loss,
     population_endpoint_loss,
@@ -65,11 +66,20 @@ def main() -> None:
     parser.add_argument("--sinkhorn-epsilon", type=float, default=0.05)
     parser.add_argument("--sinkhorn-iterations", type=int, default=80)
     parser.add_argument("--gene-chunk-size", type=int, default=256)
+    parser.add_argument(
+        "--growth-mode", choices=["none", "growth_only", "joint"], default="none"
+    )
+    parser.add_argument("--growth-hidden-dim", type=int, default=256)
+    parser.add_argument("--max-relative-growth-rate", type=float, default=4.0)
+    parser.add_argument("--growth-rate-weight", type=float, default=1e-3)
+    parser.add_argument("--growth-weight-kl", type=float, default=1e-3)
     parser.add_argument("--limit-intervals", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     if args.source_batch_size <= 0 or args.target_batch_size <= 0:
         raise ValueError("Batch sizes must be positive")
+    if args.growth_hidden_dim <= 0 or args.max_relative_growth_rate <= 0:
+        raise ValueError("Growth hidden dimension and maximum rate must be positive")
 
     checkpoint_path = StreamConfig().resolve_path(args.checkpoint)
     parent = torch.load(checkpoint_path, map_location="cpu")
@@ -147,8 +157,17 @@ def main() -> None:
         time_dim=cfg.score_flow_time_dim,
     ).to(device)
     model.load_state_dict(parent["model"])
-    trainable = configure_population_finetuning(model)
-    references = snapshot_parameters(trainable)
+    dynamics_parameters = configure_population_finetuning(
+        model, include_dynamics=args.growth_mode != "growth_only"
+    )
+    references = snapshot_parameters(dynamics_parameters)
+    growth_head = None
+    if args.growth_mode != "none":
+        growth_head = GrowthRateHead(
+            cfg.uce_embedding_dim, hidden_dim=args.growth_hidden_dim
+        ).to(device)
+    growth_parameters = [] if growth_head is None else list(growth_head.parameters())
+    trainable = dynamics_parameters + growth_parameters
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate)
     encoder = build_online_uce_encoder(cfg, selected, device)
     gene_scale = parent["gene_scale"].to(device)
@@ -164,31 +183,97 @@ def main() -> None:
         state = encoder.encode(coordinates.to_expression(current_y), seed)
         return predict_score_flow_chunked(model, state, tau, cre_inputs, cfg.gene_chunk_size)
 
+    def predict_growth(current_y, tau, seed):
+        state = encoder.encode(coordinates.to_expression(current_y), seed)
+        prediction = (
+            None
+            if args.growth_mode == "growth_only"
+            else predict_score_flow_chunked(
+                model, state, tau, cre_inputs, cfg.gene_chunk_size
+            )
+        )
+        return prediction, growth_head(state)
+
     def endpoint_objective(source, observed, t0, t1, diffusion, seed):
         source_y = coordinates.to_model(source)
-        deterministic_y = differentiable_score_flow_rollout(
-            source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, 0.0,
-            cfg.score_flow_noise_scale, args.particles,
-        )
-        stochastic_y = differentiable_score_flow_rollout(
-            source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, diffusion,
-            cfg.score_flow_noise_scale, args.particles,
-        )
-        deterministic = coordinates.to_expression(deterministic_y)
-        stochastic = coordinates.to_expression(stochastic_y)
+        if growth_head is None:
+            deterministic_y = differentiable_score_flow_rollout(
+                source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, 0.0,
+                cfg.score_flow_noise_scale, args.particles,
+            )
+            stochastic_y = differentiable_score_flow_rollout(
+                source_y, t0, t1, predict, perturbation_scale, args.rollout_steps, seed, diffusion,
+                cfg.score_flow_noise_scale, args.particles,
+            )
+            deterministic = coordinates.to_expression(deterministic_y)
+            stochastic = coordinates.to_expression(stochastic_y)
+            deterministic_weights = None
+            stochastic_weights = None
+            growth_regularization = source.new_zeros(())
+            growth_diagnostics = {}
+        else:
+            dynamics_mode = "none" if args.growth_mode == "growth_only" else "coupled"
+            deterministic_result = differentiable_growth_rollout(
+                source_y, t0, t1, predict_growth, perturbation_scale,
+                args.rollout_steps, seed, 0.0, cfg.score_flow_noise_scale,
+                args.particles, dynamics_mode, "learned", args.max_relative_growth_rate,
+            )
+            stochastic_result = differentiable_growth_rollout(
+                source_y, t0, t1, predict_growth, perturbation_scale,
+                args.rollout_steps, seed, 0.0 if dynamics_mode == "none" else diffusion,
+                cfg.score_flow_noise_scale, args.particles, dynamics_mode,
+                "learned", args.max_relative_growth_rate,
+            )
+            deterministic = coordinates.to_expression(deterministic_result.state)
+            stochastic = coordinates.to_expression(stochastic_result.state)
+            deterministic_weights = deterministic_result.weights
+            stochastic_weights = stochastic_result.weights
+            growth_rate_squared = 0.5 * (
+                deterministic_result.growth_rate_rms.square()
+                + stochastic_result.growth_rate_rms.square()
+            )
+            growth_weight_kl = 0.5 * (
+                deterministic_result.weight_kl + stochastic_result.weight_kl
+            )
+            growth_regularization = (
+                args.growth_rate_weight * growth_rate_squared
+                + args.growth_weight_kl * growth_weight_kl
+            )
+            growth_diagnostics = {
+                "growth_rate_rms": 0.5 * (
+                    deterministic_result.growth_rate_rms
+                    + stochastic_result.growth_rate_rms
+                ),
+                "growth_weight_kl": growth_weight_kl,
+                "growth_effective_sample_size": 0.5 * (
+                    deterministic_result.effective_sample_size
+                    + stochastic_result.effective_sample_size
+                ),
+            }
         repeated_source = source.repeat_interleave(args.particles, dim=0)
         deterministic_loss, deterministic_metrics = population_endpoint_loss(
             deterministic, observed, repeated_source, pca, gene_scale,
             args.sinkhorn_epsilon, args.sinkhorn_iterations, args.mean_weight, args.covariance_weight,
+            predicted_weights=deterministic_weights,
         )
         stochastic_loss, stochastic_metrics = population_endpoint_loss(
             stochastic, observed, repeated_source, pca, gene_scale,
             args.sinkhorn_epsilon, args.sinkhorn_iterations, args.mean_weight, args.covariance_weight,
+            predicted_weights=stochastic_weights,
         )
-        return 0.5 * (deterministic_loss + stochastic_loss), deterministic_metrics, stochastic_metrics
+        for metrics in (deterministic_metrics, stochastic_metrics):
+            metrics.update(growth_diagnostics)
+            metrics["growth_regularization"] = growth_regularization
+        return (
+            0.5 * (deterministic_loss + stochastic_loss) + growth_regularization,
+            deterministic_metrics,
+            stochastic_metrics,
+        )
 
     def validate() -> dict[str, float]:
         model.eval()
+        if growth_head is not None:
+            growth_head.eval()
         rows = []
         with torch.no_grad():
             for index, (source_np, target_np, t0, t1, _day0, _day1) in enumerate(validation_data):
@@ -198,13 +283,20 @@ def main() -> None:
                     torch.as_tensor(target_np, device=device),
                     t0, t1, diffusion, cfg.seed + 90_000 + index,
                 )
-                rows.append({
+                row = {
                     "validation_loss": float(loss.cpu()),
                     "validation_ode_sinkhorn": float(ode["sinkhorn"].cpu()),
                     "validation_sde_sinkhorn": float(sde["sinkhorn"].cpu()),
                     "validation_ode_skill": float(ode["sinkhorn_skill"].cpu()),
                     "validation_sde_skill": float(sde["sinkhorn_skill"].cpu()),
-                })
+                }
+                for key in (
+                    "growth_rate_rms", "growth_weight_kl",
+                    "growth_effective_sample_size", "growth_regularization",
+                ):
+                    if key in ode:
+                        row[f"validation_{key}"] = float(ode[key].cpu())
+                rows.append(row)
         return {key: float(np.mean([row[key] for row in rows])) for key in rows[0]}
 
     def save_checkpoint(selection: dict[str, float | int]) -> None:
@@ -213,7 +305,11 @@ def main() -> None:
             "optimizer": optimizer.state_dict(),
             "config": cfg.to_dict(),
             "model_contract": (
-                "online_uce_gene_scaled_population_score_flow_v4"
+                "online_uce_gene_scaled_growth_population_score_flow_v5"
+                if growth_head is not None and coordinates.mode == "gene_scaled"
+                else "online_uce_growth_population_score_flow_v4"
+                if growth_head is not None
+                else "online_uce_gene_scaled_population_score_flow_v4"
                 if coordinates.mode == "gene_scaled"
                 else "online_uce_population_finetuned_score_flow_v3"
             ),
@@ -227,6 +323,8 @@ def main() -> None:
             "parent_checkpoint": str(checkpoint_path),
             "population_finetuning": vars(args),
         }
+        if growth_head is not None:
+            payload["growth_head"] = growth_head.state_dict()
         temporary = output_path.with_suffix(".pt.tmp")
         torch.save(payload, temporary)
         temporary.replace(output_path)
@@ -243,6 +341,8 @@ def main() -> None:
     schedule = list(intervals)
     rng.shuffle(schedule)
     model.eval()
+    if growth_head is not None:
+        growth_head.train()
     for update in range(1, args.max_updates + 1):
         if (update - 1) % len(schedule) == 0 and update > 1:
             rng.shuffle(schedule)
@@ -255,7 +355,11 @@ def main() -> None:
         endpoint_loss, ode, sde = endpoint_objective(
             source, observed, batch.t0, batch.t1, diffusion, cfg.seed + update * 101
         )
-        anchor = parameter_anchor_loss(trainable, references)
+        anchor = (
+            parameter_anchor_loss(dynamics_parameters, references)
+            if dynamics_parameters
+            else source.new_zeros(())
+        )
         loss = endpoint_loss + args.anchor_weight * anchor
         if not torch.isfinite(loss):
             raise FloatingPointError(f"Non-finite population loss at update {update}")
@@ -277,6 +381,12 @@ def main() -> None:
             "anchor_loss": float(anchor.detach().cpu()),
             "gradient_norm": float(gradient_norm.detach().cpu()),
         })
+        for key in (
+            "growth_rate_rms", "growth_weight_kl",
+            "growth_effective_sample_size", "growth_regularization",
+        ):
+            if key in ode:
+                metrics[-1][key] = float(ode[key].detach().cpu())
         if update % args.validation_every != 0 and update != args.max_updates:
             continue
         validation = validate()
