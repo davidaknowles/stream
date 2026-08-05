@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-08-05
+
+- The first growth-only/joint smokes `19533138`/`19533139` initialized and saved valid zero-growth checkpoints, then failed after update one because gradients through 80 Sinkhorn matrix-scaling iterations made the growth head non-finite. Replaced that path with detached Sinkhorn plans and exact envelope gradients from source/target dual potentials. The analytic gradient matches central finite differences within `3.5e-6`; gradient clipping now raises before any non-finite optimizer update, and all 57 tests pass.
+- Cancelled only the dependency-dead descendants and submitted corrected smoke/evaluation chains `19536239`/`19536241` and `19536240`/`19536242`. Corrected production jobs are FiLM growth-only/joint `19536243`/`19536245` and cross-attention growth-only/joint `19536247`/`19536249`, with each following even job as its causal evaluation; summary job `19536251` depends on all four.
+
 ## 2026-08-04
 
 - Implemented UCE-conditioned relative growth for population rollouts. A zero-initialized scalar head predicts bounded cell-specific rates; weighted particles are updated by centered exponential growth and renormalized because snapshot stages identify relative lineage abundance but not absolute embryo size. Weighted Sinkhorn, gene means, and PCA covariance propagate gradients to growth, with rate and weight-KL regularization and effective-sample-size diagnostics. Growth-only bypasses the 10,000-gene velocity field; joint mode retains coupled ODE/SDE dynamics. Causal evaluation includes fixed-mass velocity, growth-only, and joint growth controls while preserving learned-score versus zero-score comparisons. All 56 focused and regression tests pass.
