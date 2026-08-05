@@ -1031,6 +1031,7 @@ def test_growth_rollout_preserves_states_and_uniform_weights_at_initialization()
 
     assert torch.equal(result.state, x0.repeat_interleave(2, dim=0))
     assert torch.allclose(result.weights, torch.full((4,), 0.25))
+    assert result.growth_rate_mean_square == pytest.approx(0.0)
     assert result.growth_rate_rms == pytest.approx(0.0)
     assert result.weight_kl == pytest.approx(0.0)
     assert result.effective_sample_size == pytest.approx(4.0)
@@ -1067,6 +1068,39 @@ def test_growth_rollout_learns_relative_weights_and_weighted_sinkhorn_gradients(
     assert coefficient.grad is not None
     assert torch.isfinite(coefficient.grad)
     assert coefficient.grad.abs() > 0
+
+
+def test_zero_initialized_growth_regularization_has_finite_gradient():
+    torch = pytest.importorskip("torch")
+    from stream_model.population_finetune import (
+        differentiable_growth_rollout,
+        differentiable_sinkhorn_divergence,
+    )
+
+    coefficient = torch.nn.Parameter(torch.tensor(0.0))
+    source = torch.tensor([[0.0], [0.5], [1.0]])
+
+    def predict_growth(x, tau, seed):
+        del tau, seed
+        return None, coefficient * x[:, 0]
+
+    result = differentiable_growth_rollout(
+        source, 0.0, 1.0, predict_growth, torch.ones(1), 2, 8, 0.0, 0.2,
+        dynamics_mode="none",
+    )
+    endpoint = differentiable_sinkhorn_divergence(
+        result.state,
+        torch.tensor([[0.2], [0.8], [1.1]]),
+        epsilon=0.1,
+        iterations=50,
+        x_weights=result.weights,
+    )
+    loss = endpoint + 1e-3 * (
+        result.growth_rate_mean_square + result.weight_kl
+    )
+    loss.backward()
+    assert coefficient.grad is not None
+    assert torch.isfinite(coefficient.grad)
 
 
 def test_weighted_mean_shift_uses_growth_weights():

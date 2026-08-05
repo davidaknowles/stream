@@ -136,6 +136,7 @@ def differentiable_sinkhorn_divergence(
 class GrowthRolloutResult:
     state: torch.Tensor
     weights: torch.Tensor
+    growth_rate_mean_square: torch.Tensor
     growth_rate_rms: torch.Tensor
     weight_kl: torch.Tensor
     effective_sample_size: torch.Tensor
@@ -210,10 +211,12 @@ def differentiable_growth_rollout(
         x = torch.clamp(x, min=0.0)
     weights = torch.softmax(log_weights, dim=0)
     weight_kl = torch.sum(weights * (torch.log(weights.clamp_min(1e-30)) + math.log(len(weights))))
+    growth_rate_mean_square = torch.stack(squared_rates).mean()
     return GrowthRolloutResult(
         state=x,
         weights=weights,
-        growth_rate_rms=torch.stack(squared_rates).mean().sqrt(),
+        growth_rate_mean_square=growth_rate_mean_square,
+        growth_rate_rms=growth_rate_mean_square.detach().sqrt(),
         weight_kl=weight_kl,
         effective_sample_size=weights.square().sum().reciprocal(),
     )

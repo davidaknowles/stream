@@ -229,8 +229,8 @@ def main() -> None:
             deterministic_weights = deterministic_result.weights
             stochastic_weights = stochastic_result.weights
             growth_rate_squared = 0.5 * (
-                deterministic_result.growth_rate_rms.square()
-                + stochastic_result.growth_rate_rms.square()
+                deterministic_result.growth_rate_mean_square
+                + stochastic_result.growth_rate_mean_square
             )
             growth_weight_kl = 0.5 * (
                 deterministic_result.weight_kl + stochastic_result.weight_kl
