@@ -4,6 +4,7 @@
 
 - The first growth-only/joint smokes `19533138`/`19533139` initialized and saved valid zero-growth checkpoints, then failed after update one because gradients through 80 Sinkhorn matrix-scaling iterations made the growth head non-finite. Replaced that path with detached Sinkhorn plans and exact envelope gradients from source/target dual potentials. The analytic gradient matches central finite differences within `3.5e-6`; gradient clipping now raises before any non-finite optimizer update, and all 57 tests pass.
 - Cancelled only the dependency-dead descendants and submitted corrected smoke/evaluation chains `19536239`/`19536241` and `19536240`/`19536242`. Corrected production jobs are FiLM growth-only/joint `19536243`/`19536245` and cross-attention growth-only/joint `19536247`/`19536249`, with each following even job as its causal evaluation; summary job `19536251` depends on all four.
+- The v2 smokes stopped safely before the optimizer because the zero-initialized rate RMS diagnostic had a singular square-root derivative when its square was reused as the regularizer. Growth regularization now uses mean squared rate directly and reports a detached RMS. Added an end-to-end zero-growth gradient regression; all 58 tests pass. Cancelled the second dependency-dead descendants and submitted v3 smoke/evaluation chains `19543003`/`19543005` and `19543004`/`19543006`. Production growth-only/joint jobs are FiLM `19543007`/`19543009` and cross-attention `19543011`/`19543013`, each followed by its evaluation; summary is `19543015`.
 
 ## 2026-08-04
 
