@@ -128,6 +128,11 @@ def main() -> None:
             )
             return prediction, growth_head(state)
 
+        def predict_growth_only(current_y, tau, seed):
+            del tau
+            state = encoder.encode(coordinates.to_expression(current_y), seed)
+            return None, growth_head(state)
+
         controls = [
             ("autonomous", "not_used", 0.0, "none"),
             ("coupled", "not_used", 0.0, "none"),
@@ -159,7 +164,7 @@ def main() -> None:
                         coordinates.to_model(torch.as_tensor(source, device=device)),
                         batch.t0,
                         batch.t1,
-                        predict_growth,
+                        predict_growth_only if dynamics_mode == "none" else predict_growth,
                         perturbation_scale,
                         args.steps,
                         seed,
