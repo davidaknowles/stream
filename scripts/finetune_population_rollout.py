@@ -218,11 +218,15 @@ def main() -> None:
                 args.rollout_steps, seed, 0.0, cfg.score_flow_noise_scale,
                 args.particles, dynamics_mode, "learned", args.max_relative_growth_rate,
             )
-            stochastic_result = differentiable_growth_rollout(
-                source_y, t0, t1, predict_growth, perturbation_scale,
-                args.rollout_steps, seed, 0.0 if dynamics_mode == "none" else diffusion,
-                cfg.score_flow_noise_scale, args.particles, dynamics_mode,
-                "learned", args.max_relative_growth_rate,
+            stochastic_result = (
+                deterministic_result
+                if dynamics_mode == "none"
+                else differentiable_growth_rollout(
+                    source_y, t0, t1, predict_growth, perturbation_scale,
+                    args.rollout_steps, seed, diffusion,
+                    cfg.score_flow_noise_scale, args.particles, dynamics_mode,
+                    "learned", args.max_relative_growth_rate,
+                )
             )
             deterministic = coordinates.to_expression(deterministic_result.state)
             stochastic = coordinates.to_expression(stochastic_result.state)
