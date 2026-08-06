@@ -9,6 +9,18 @@ from pathlib import Path
 import pandas as pd
 
 
+def checkpoint_training_mode(path: Path) -> str:
+    """Identify checkpoint families that must not be averaged together."""
+    name = path.stem
+    if "_growth_growth_only_" in name:
+        return "growth_only"
+    if "_growth_joint_" in name:
+        return "joint"
+    if "_population_" in name:
+        return "population"
+    return "score_flow"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="outputs/stream_hvg10000")
@@ -20,7 +32,16 @@ def main() -> None:
     paths = sorted(out_dir.glob(args.pattern))
     if not paths:
         raise FileNotFoundError(f"No score-flow evaluations match {out_dir / args.pattern}")
-    frame = pd.concat([pd.read_csv(path).assign(source_file=path.name) for path in paths], ignore_index=True)
+    frame = pd.concat(
+        [
+            pd.read_csv(path).assign(
+                source_file=path.name,
+                checkpoint_training_mode=checkpoint_training_mode(path),
+            )
+            for path in paths
+        ],
+        ignore_index=True,
+    )
     metrics = [
         "sinkhorn_skill",
         "endpoint_sinkhorn",
@@ -29,10 +50,24 @@ def main() -> None:
         "mean_gene_wasserstein1",
     ]
     group_columns = [
-        "variant", "endpoint_denoising", "dynamics_mode", "score_control", "diffusion"
+        "checkpoint_training_mode",
+        "variant",
+        "endpoint_denoising",
+        "dynamics_mode",
+        "score_control",
+        "diffusion",
     ]
     if "growth_control" in frame:
         group_columns.append("growth_control")
+    metrics.extend(
+        column
+        for column in (
+            "growth_effective_sample_size",
+            "growth_weight_kl",
+            "growth_rate_rms",
+        )
+        if column in frame
+    )
     summary = (
         frame.groupby(
             group_columns,
