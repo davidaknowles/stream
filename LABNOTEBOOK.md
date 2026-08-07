@@ -1,5 +1,10 @@
 # Lab Notebook
 
+## 2026-08-07
+
+- Both extended raw population fine-tunes converged under the existing stopping rule rather than reaching the 400-update cap. FiLM selected update 260 and stopped at 360; cross-attention selected update 280 and stopped at 380 after five validation checks without a further 0.2% relative EMA improvement. Selected observed-stage ODE validation skill was `0.06131` for FiLM and `0.05803` for cross-attention.
+- The extended FiLM held-out middle-block evaluation completed. Relative to its selected 200-update run, mean deterministic coupled Sinkhorn skill improved from `0.09426` to `0.09675`, mean-shift R-squared from `-0.46883` to `-0.35282`, mean-shift MAE from `0.11353` to `0.10910`, and mean gene Wasserstein-1 from `0.14452` to `0.13975`. Additional fitting therefore helps modestly but still does not beat persistence on gene-level mean shifts. The extended cross-attention held-out evaluation `19594176` remains active.
+
 ## 2026-08-06
 
 - Extended only the raw gene-scaled population fine-tunes from a 200- to 400-update maximum, retaining validation every 20 updates, five-check patience, and the 0.2% minimum relative improvement rule. The existing selected checkpoints do not persist the final training/RNG state, so exact continuation is unavailable; the extensions are deterministic fresh runs from the same score-flow parents under new labels, preserving the original artifacts. FiLM training/evaluation jobs are `19594173`/`19594174`, and cross-attention jobs are `19594175`/`19594176`.
