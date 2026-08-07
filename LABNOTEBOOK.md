@@ -1,5 +1,9 @@
 # Lab Notebook
 
+## 2026-08-06
+
+- Extended only the raw gene-scaled population fine-tunes from a 200- to 400-update maximum, retaining validation every 20 updates, five-check patience, and the 0.2% minimum relative improvement rule. The existing selected checkpoints do not persist the final training/RNG state, so exact continuation is unavailable; the extensions are deterministic fresh runs from the same score-flow parents under new labels, preserving the original artifacts. FiLM training/evaluation jobs are `19594173`/`19594174`, and cross-attention jobs are `19594175`/`19594176`.
+
 ## 2026-08-05
 
 - The first growth-only/joint smokes `19533138`/`19533139` initialized and saved valid zero-growth checkpoints, then failed after update one because gradients through 80 Sinkhorn matrix-scaling iterations made the growth head non-finite. Replaced that path with detached Sinkhorn plans and exact envelope gradients from source/target dual potentials. The analytic gradient matches central finite differences within `3.5e-6`; gradient clipping now raises before any non-finite optimizer update, and all 57 tests pass.
