@@ -1180,6 +1180,44 @@ def test_endpoint_metrics_are_exact_for_identical_predictions():
     assert sinkhorn_divergence(x1, x1, epsilon=0.1) == pytest.approx(0.0, abs=1e-8)
 
 
+def test_subtype_metrics_separate_composition_and_pseudobulk_shifts():
+    from stream_model.subtype import SubtypeStatistics, subtype_dynamics_metrics
+
+    source = SubtypeStatistics.empty(2, 2)
+    observed = SubtypeStatistics.empty(2, 2)
+    predicted = SubtypeStatistics.empty(2, 2)
+    source.update(np.array([[1.0, 2.0], [3.0, 4.0]]), np.array([0, 1]))
+    observed.update(np.array([[2.0, 4.0], [5.0, 7.0]]), np.array([0, 1]))
+    predicted.update(np.array([[2.0, 4.0], [5.0, 7.0]]), np.array([0, 1]))
+
+    metrics = subtype_dynamics_metrics(source, observed, predicted, min_cells=1)
+
+    assert metrics["subtype_js_divergence"] == pytest.approx(0.0)
+    assert metrics["subtype_total_variation"] == pytest.approx(0.0)
+    assert metrics["subtype_pseudobulk_shift_r2_pooled"] == pytest.approx(1.0)
+    assert metrics["subtype_pseudobulk_shift_r2_macro"] == pytest.approx(1.0)
+
+
+def test_subtype_centroid_classifier_and_weighted_statistics(tmp_path):
+    from stream_model.subtype import SubtypeCentroidClassifier, SubtypeStatistics
+
+    classifier = SubtypeCentroidClassifier(
+        labels=np.array(["a", "b"]),
+        centroids=np.array([[0.0, 0.0], [2.0, 2.0]]),
+        metadata={"label_column": "celltype_update"},
+    )
+    assert classifier.predict_coordinates(np.array([[0.1, 0.2], [1.9, 2.1]])).tolist() == [0, 1]
+    path = tmp_path / "subtypes.npz"
+    classifier.save(path)
+    restored = SubtypeCentroidClassifier.load(path)
+    assert restored.labels.tolist() == ["a", "b"]
+
+    stats = SubtypeStatistics.empty(2, 1)
+    stats.update(np.array([[1.0], [3.0]]), np.array([0, 1]), weights=np.array([0.75, 0.25]))
+    assert stats.mass.tolist() == pytest.approx([1.5, 0.5])
+    assert stats.expression_sum[:, 0].tolist() == pytest.approx([1.5, 1.5])
+
+
 def test_evaluate_intervals_reports_full_and_subset_gene_sets():
     torch = pytest.importorskip("torch")
     from stream_model.data import IntervalBatch
